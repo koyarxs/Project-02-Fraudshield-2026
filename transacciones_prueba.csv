@@ -1,0 +1,4 @@
+transactionCode,customerCode,amount,currency,transactionDate,transactionHour,originLocation,destinationLocation
+TX-1001,CLI-100,750000,CLP,2026-07-10T01:30:00.000Z,01:30,Valparaiso,Santiago
+TX-1002,CLI-101,120000,CLP,2026-07-10T12:15:00.000Z,12:15,Vina del Mar,Vina del Mar
+TX-1003,CLI-102,300000,CLP,2026-07-10T04:45:00.000Z,04:45,Santiago,Santiago

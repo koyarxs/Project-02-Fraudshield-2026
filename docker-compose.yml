@@ -1,0 +1,19 @@
+services:
+  postgres:
+    image: postgres:16
+    container_name: fraudshield-postgres
+    restart: unless-stopped
+
+    environment:
+      POSTGRES_USER: fraudshield
+      POSTGRES_PASSWORD: "123"
+      POSTGRES_DB: fraudshield_db
+
+    ports:
+      - "5435:5432"
+
+    volumes:
+      - fraudshield_postgres_data:/var/lib/postgresql/data
+
+volumes:
+  fraudshield_postgres_data:

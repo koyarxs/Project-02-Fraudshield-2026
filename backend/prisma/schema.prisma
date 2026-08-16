@@ -1,0 +1,251 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+// Get a free hosted Postgres database in seconds: `npx create-db`
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id        Int      @id @default(autoincrement())
+  name      String
+  email     String   @unique
+  password  String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  uploadedFiles UploadedFile[]
+  auditLogs     AuditLog[]
+  riskCases     RiskCase[]
+  riskCaseTimelineEvents RiskCaseTimeline[]
+  controlListEntries ControlListEntry[]
+}
+
+model UploadedFile {
+  id           Int      @id @default(autoincrement())
+  fileName     String
+  fileType     String
+  fileSize     Int
+  status       String   @default("PENDING")
+  uploadedAt   DateTime @default(now())
+
+  userId       Int
+  user         User     @relation(fields: [userId], references: [id])
+
+  batches      ProcessingBatch[]
+}
+
+model ProcessingBatch {
+  id              Int      @id @default(autoincrement())
+  totalRecords    Int      @default(0)
+  processedRecords Int     @default(0)
+  status          String   @default("PENDING")
+  startedAt       DateTime @default(now())
+  finishedAt      DateTime?
+
+  uploadedFileId  Int
+  uploadedFile    UploadedFile @relation(fields: [uploadedFileId], references: [id])
+
+  transactions    Transaction[]
+  histories       ProcessingHistory[]
+  dashboardMetric DashboardMetric?
+}
+
+model Transaction {
+  id              Int      @id @default(autoincrement())
+  transactionCode String
+  customerCode    String
+  amount          Decimal  @db.Decimal(12, 2)
+  currency        String   @default("CLP")
+  transactionDate DateTime
+  transactionHour String
+  originLocation  String?
+  destinationLocation String?
+  createdAt       DateTime @default(now())
+
+  batchId         Int
+  batch           ProcessingBatch @relation(fields: [batchId], references: [id])
+
+  riskResult      RiskResult?
+  riskCases       RiskCase[]
+  validationErrors ValidationError[]
+}
+
+model RiskLevel {
+  id          Int      @id @default(autoincrement())
+  name        String   @unique
+  description String?
+  priority    Int
+
+  riskRules   RiskRule[]
+  riskResults RiskResult[]
+}
+
+model RiskRule {
+  id          Int      @id @default(autoincrement())
+  code        String   @unique
+  name        String
+  condition   String
+  description String?
+  active      Boolean  @default(true)
+
+  riskLevelId Int
+  riskLevel   RiskLevel @relation(fields: [riskLevelId], references: [id])
+}
+
+model RiskResult {
+  id              Int      @id @default(autoincrement())
+  score           Int      @default(0)
+  observation     String?
+  ruleDetails     Json?
+  classifiedAt    DateTime @default(now())
+
+  transactionId   Int      @unique
+  transaction     Transaction @relation(fields: [transactionId], references: [id])
+
+  riskLevelId     Int
+  riskLevel       RiskLevel @relation(fields: [riskLevelId], references: [id])
+
+  riskCases       RiskCase[]
+}
+
+model RiskCase {
+  id                 Int      @id @default(autoincrement())
+  status             String   @default("PENDIENTE")
+  priority           String   @default("NORMAL")
+  reviewResult       String?
+  observations       String?
+  actionTaken        String?
+  internalComments   String?
+  responsibleName    String?
+  riskLevelSnapshot  String
+  scoreSnapshot      Int
+  classificationReason String?
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+  resolvedAt         DateTime?
+
+  transactionId      Int      @unique
+  transaction        Transaction @relation(fields: [transactionId], references: [id])
+
+  riskResultId       Int?
+  riskResult         RiskResult? @relation(fields: [riskResultId], references: [id])
+
+  responsibleUserId  Int?
+  responsibleUser    User?    @relation(fields: [responsibleUserId], references: [id])
+
+  timelineEvents     RiskCaseTimeline[]
+}
+
+model RiskCaseTimeline {
+  id          Int      @id @default(autoincrement())
+  eventType   String
+  description String
+  metadata    Json?
+  createdAt   DateTime @default(now())
+
+  riskCaseId  Int
+  riskCase    RiskCase @relation(fields: [riskCaseId], references: [id], onDelete: Cascade)
+
+  userId      Int?
+  user        User?    @relation(fields: [userId], references: [id])
+}
+
+model ControlListEntry {
+  id             Int      @id @default(autoincrement())
+  listType       String
+  identifierType String
+  identifier     String
+  reason         String?
+  active         Boolean  @default(true)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  createdById    Int?
+  createdBy      User?    @relation(fields: [createdById], references: [id])
+
+  @@unique([listType, identifierType, identifier])
+}
+
+model ProcessingHistory {
+  id          Int      @id @default(autoincrement())
+  action      String
+  description String?
+  createdAt   DateTime @default(now())
+
+  batchId     Int
+  batch       ProcessingBatch @relation(fields: [batchId], references: [id])
+}
+
+model DashboardMetric {
+  id              Int      @id @default(autoincrement())
+  totalRecords    Int
+  lowRiskCount    Int
+  mediumRiskCount Int
+  highRiskCount   Int
+  generatedAt     DateTime @default(now())
+
+  batchId         Int      @unique
+  batch           ProcessingBatch @relation(fields: [batchId], references: [id])
+}
+
+model ValidationError {
+  id            Int      @id @default(autoincrement())
+  fieldName     String
+  errorMessage  String
+  createdAt     DateTime @default(now())
+
+  transactionId Int
+  transaction   Transaction @relation(fields: [transactionId], references: [id])
+}
+
+model AuditLog {
+  id        Int      @id @default(autoincrement())
+  action    String
+  module    String
+  detail    String?
+  createdAt DateTime @default(now())
+
+  userId    Int?
+  user      User?    @relation(fields: [userId], references: [id])
+}
+
+model SystemEvidence {
+  id          Int      @id @default(autoincrement())
+  evidenceType String
+  description  String
+  filePath     String?
+  createdAt    DateTime @default(now())
+}
+
+model TestCase {
+  id             Int      @id @default(autoincrement())
+  code           String   @unique
+  description    String
+  expectedResult String
+  actualResult   String?
+  status         String   @default("PENDING")
+  executedAt     DateTime?
+}
+
+model SystemSetting {
+  id        Int      @id @default(autoincrement())
+  key       String   @unique
+  value     String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model ErrorLog {
+  id          Int      @id @default(autoincrement())
+  module      String
+  message     String
+  stackTrace  String?
+  createdAt   DateTime @default(now())
+}
