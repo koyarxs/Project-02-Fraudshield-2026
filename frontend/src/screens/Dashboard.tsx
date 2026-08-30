@@ -2,10 +2,8 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   FiAlertTriangle,
   FiArchive,
-  FiCalendar,
   FiCheckCircle,
   FiDatabase,
-  FiFileText,
   FiLayers,
   FiShield,
 } from 'react-icons/fi';
@@ -14,11 +12,8 @@ import MetricCard from '../components/dashboard/MetricCard';
 import RiskChart from '../components/dashboard/RiskChart';
 import RecentProcessingTable from '../components/dashboard/RecentProcessingTable';
 import SystemStatus from '../components/dashboard/SystemStatus';
-import LastProcessingCard from '../components/dashboard/LastProcessingCard';
-import RecentActivity from '../components/dashboard/RecentActivity';
 import ValidationSummary from '../components/dashboard/ValidationSummary';
 import QuickActions from '../components/dashboard/QuickActions';
-import StorageEvidence from '../components/dashboard/StorageEvidence';
 import { useAuth } from '../hooks/useAuth';
 import { processingStoreService } from '../services/processing-store.service';
 import riskCaseService from '../services/risk-case.service';
@@ -26,8 +21,6 @@ import transactionService from '../services/transaction.service';
 import type { ProcessingBatch } from '../types/processing';
 import type { ApiTransaction } from '../types/transaction';
 import type { RiskCaseSummary } from '../types/transaction';
-import { exportRowsToCsv } from '../utils/exportCsv';
-import { formatDate } from '../utils/formatDate';
 
 type PeriodFilter = 'today' | '7d' | '30d' | 'all';
 
@@ -57,7 +50,6 @@ export default function Dashboard() {
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [apiAvailable, setApiAvailable] = useState(false);
   const [error, setError] = useState('');
-  const [exportMessage, setExportMessage] = useState('');
 
   const refreshDashboard = useCallback(async () => {
     setIsRefreshing(true);
@@ -124,18 +116,12 @@ export default function Dashboard() {
           mediumRiskCount:
             summary.mediumRiskCount + batch.mediumRiskCount,
           lowRiskCount: summary.lowRiskCount + batch.lowRiskCount,
-          completedFiles: summary.completedFiles + 1,
-          failedFiles:
-            summary.failedFiles +
-            (batch.status.toLowerCase().includes('fall') ? 1 : 0),
         }),
         {
           totalRecords: 0,
           highRiskCount: 0,
           mediumRiskCount: 0,
           lowRiskCount: 0,
-          completedFiles: 0,
-          failedFiles: 0,
         },
       ),
     [filteredBatches],
@@ -162,14 +148,14 @@ export default function Dashboard() {
     {
       title: 'Riesgo medio',
       value: totals.mediumRiskCount,
-      description: 'Casos que requieren validación complementaria.',
+      description: 'Transacciones con señales que requieren validación.',
       icon: FiShield,
       tone: 'amber' as const,
     },
     {
       title: 'Riesgo bajo',
       value: totals.lowRiskCount,
-      description: 'Operaciones clasificadas con exposición reducida.',
+      description: 'Transacciones clasificadas con exposición reducida.',
       icon: FiCheckCircle,
       tone: 'emerald' as const,
     },
@@ -181,125 +167,31 @@ export default function Dashboard() {
       tone: 'cyan' as const,
     },
     {
-      title: 'Archivos procesados',
-      value: totals.completedFiles,
-      description: 'Archivos con procesamiento exitoso confirmado.',
-      icon: FiFileText,
-      tone: 'emerald' as const,
-    },
-    {
-      title: 'Archivos con errores',
-      value: totals.failedFiles,
-      description: 'Errores históricos disponibles en datos del frontend.',
-      icon: FiAlertTriangle,
-      tone: 'red' as const,
-    },
-    {
-      title: 'Última fecha',
-      value: lastBatch ? formatDate(lastBatch.uploadedAt) : 'Sin datos',
-      description: 'Fecha del procesamiento más reciente disponible.',
-      icon: FiCalendar,
-      tone: 'blue' as const,
-    },
-    {
       title: 'Casos abiertos',
       value: caseSummary.open ?? caseSummary.pending + caseSummary.inReview,
-      description: 'Casos que aun requieren seguimiento.',
+      description:
+        'Casos no resueltos: pendientes y en revisión por el equipo.',
       icon: FiLayers,
       tone: 'blue' as const,
-    },
-    {
-      title: 'Casos pendientes',
-      value: caseSummary.pending,
-      description: 'Gestiones creadas que esperan revision.',
-      icon: FiLayers,
-      tone: 'amber' as const,
-    },
-    {
-      title: 'Casos en revision',
-      value: caseSummary.inReview,
-      description: 'Operaciones en analisis por el equipo.',
-      icon: FiShield,
-      tone: 'blue' as const,
-    },
-    {
-      title: 'Casos resueltos',
-      value: caseSummary.resolved,
-      description: 'Revisiones cerradas con trazabilidad.',
-      icon: FiCheckCircle,
-      tone: 'emerald' as const,
-    },
-    {
-      title: 'Alto pendientes',
-      value: caseSummary.highRiskPending,
-      description: 'Casos de riesgo Alto aun no resueltos.',
-      icon: FiAlertTriangle,
-      tone: 'red' as const,
-    },
-    {
-      title: 'Casos prioritarios',
-      value: caseSummary.priorityOpen ?? 0,
-      description: 'Casos abiertos con prioridad Alta o Urgente.',
-      icon: FiAlertTriangle,
-      tone: 'red' as const,
-    },
-    {
-      title: 'Sospechas descartadas',
-      value: caseSummary.discarded ?? 0,
-      description: 'Revisiones cerradas como falso positivo operativo.',
-      icon: FiCheckCircle,
-      tone: 'emerald' as const,
-    },
-    {
-      title: 'Operaciones sospechosas',
-      value: caseSummary.suspicious ?? 0,
-      description: 'Casos marcados para seguimiento reforzado.',
-      icon: FiAlertTriangle,
-      tone: 'red' as const,
     },
   ];
-
-  const handleExportSummary = () => {
-    setExportMessage('');
-
-    const exported = exportRowsToCsv(
-      [
-        {
-          totalTransacciones: totals.totalRecords,
-          riesgoAlto: totals.highRiskCount,
-          riesgoMedio: totals.mediumRiskCount,
-          riesgoBajo: totals.lowRiskCount,
-          lotesProcesados: filteredBatches.length,
-          archivosProcesados: totals.completedFiles,
-          archivosConErrores: totals.failedFiles,
-          ultimoArchivo: lastBatch?.fileName,
-          ultimoBatchId: lastBatch?.batchId,
-          fechaGeneracion: new Date().toISOString(),
-        },
-      ],
-      `fraudshield_dashboard_resumen_${new Date().toISOString().slice(0, 10)}.csv`,
-    );
-
-    setExportMessage(
-      exported
-        ? 'Resumen exportado correctamente.'
-        : 'No existen datos para exportar.',
-    );
-  };
 
   return (
     <DashboardLayout>
       <div className="space-y-6">
-        <section className="app-card rounded-[24px] p-5 lg:p-6">
+        <section className="module-sticky-header app-card rounded-[24px] p-5 lg:p-6">
           <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
             <div>
               <p className="text-sm font-semibold uppercase tracking-[0.16em] text-blue-700">
-                Dashboard
+                Panel general
               </p>
               <h1 className="mt-2 text-3xl font-bold text-slate-950">
-                Resumen general del procesamiento, clasificación y
-                trazabilidad de transacciones.
+                Dashboard
               </h1>
+              <p className="mt-2 max-w-3xl text-sm leading-6 text-slate-600">
+                Resumen de transacciones procesadas, distribución de riesgo y
+                casos abiertos para seguimiento.
+              </p>
             </div>
 
             {batches.length > 0 && (
@@ -322,12 +214,6 @@ export default function Dashboard() {
               </div>
             )}
           </div>
-
-          {exportMessage && (
-            <p className="mt-4 rounded-2xl bg-blue-50 px-4 py-3 text-sm font-medium text-blue-800">
-              {exportMessage}
-            </p>
-          )}
         </section>
 
         {isLoading && <DashboardSkeleton />}
@@ -362,13 +248,22 @@ export default function Dashboard() {
               ))}
             </div>
 
-            <QuickActions onExport={handleExportSummary} />
+            <QuickActions />
 
-            <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_380px]">
+            <div className="grid gap-6">
               <RiskChart
                 highRiskCount={totals.highRiskCount}
                 mediumRiskCount={totals.mediumRiskCount}
                 lowRiskCount={totals.lowRiskCount}
+              />
+            </div>
+
+            <RecentProcessingTable rows={filteredBatches.slice(0, 5)} />
+
+            <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_420px]">
+              <ValidationSummary
+                transactions={transactions}
+                lastError={error || undefined}
               />
               <SystemStatus
                 lastUpdated={lastBatch?.uploadedAt}
@@ -380,21 +275,6 @@ export default function Dashboard() {
                 onRefresh={() => void refreshDashboard()}
               />
             </div>
-
-            <LastProcessingCard batch={lastBatch} />
-
-            <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_420px]">
-              <RecentProcessingTable rows={filteredBatches.slice(0, 5)} />
-              <RecentActivity batches={filteredBatches} />
-            </div>
-
-            <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_420px]">
-              <ValidationSummary
-                transactions={transactions}
-                lastError={error || undefined}
-              />
-              <StorageEvidence batch={lastBatch} />
-            </div>
           </>
         )}
       </div>
@@ -405,7 +285,7 @@ export default function Dashboard() {
 function DashboardSkeleton() {
   return (
     <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-      {Array.from({ length: 8 }).map((_, index) => (
+      {Array.from({ length: 6 }).map((_, index) => (
         <div
           key={index}
           className="rounded-[24px] border border-slate-200 bg-white p-5 shadow-sm"

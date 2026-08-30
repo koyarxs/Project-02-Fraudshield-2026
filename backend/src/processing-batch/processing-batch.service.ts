@@ -36,10 +36,7 @@ export class ProcessingBatchService {
     });
   }
 
-  update(
-    id: number,
-    updateProcessingBatchDto: UpdateProcessingBatchDto,
-  ) {
+  update(id: number, updateProcessingBatchDto: UpdateProcessingBatchDto) {
     return this.prisma.processingBatch.update({
       where: { id },
       data: updateProcessingBatchDto,

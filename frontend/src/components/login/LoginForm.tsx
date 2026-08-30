@@ -4,7 +4,6 @@ import {
   FiArrowRight,
   FiLoader,
   FiMail,
-  FiShield,
 } from 'react-icons/fi';
 import PasswordInput from './PasswordInput';
 
@@ -61,22 +60,15 @@ export default function LoginForm({ logoUnab, onLogin }: LoginFormProps) {
   return (
     <div className="login-form-enter mx-auto w-full max-w-[520px]">
       <div className="mb-9">
-        <div className="inline-flex items-center gap-3 rounded-full border border-blue-100 bg-blue-50 px-3 py-2 text-blue-700">
-          <span className="flex h-8 w-8 items-center justify-center rounded-full bg-white shadow-sm">
-            <FiShield className="h-4 w-4" aria-hidden="true" />
-          </span>
-          <p className="text-xs font-bold uppercase tracking-[0.24em]">
-            Acceso seguro
-          </p>
-        </div>
-
-        <h1 className="mt-6 text-4xl font-bold tracking-tight text-slate-950 sm:text-5xl">
+        <h1 className="text-4xl font-bold tracking-tight text-white sm:text-5xl lg:text-slate-950">
           Iniciar sesion
         </h1>
 
-        <p className="mt-4 max-w-md text-base leading-7 text-slate-600">
+        <p className="mt-4 max-w-md text-base leading-7 text-blue-100/85 lg:text-slate-600">
           Ingresa tus credenciales para acceder a la plataforma
-          FraudShield.
+          <span className="font-bold text-cyan-200 lg:text-blue-700">
+            {' '}FraudShield
+          </span>.
         </p>
       </div>
 
@@ -84,7 +76,7 @@ export default function LoginForm({ logoUnab, onLogin }: LoginFormProps) {
         <div>
           <label
             htmlFor="email"
-            className="mb-2.5 block text-sm font-semibold text-slate-800"
+            className="mb-2.5 block text-sm font-semibold text-blue-50 lg:text-slate-800"
           >
             Correo electronico
           </label>
@@ -110,7 +102,7 @@ export default function LoginForm({ logoUnab, onLogin }: LoginFormProps) {
           </div>
 
           {fieldErrors.email && (
-            <p id="email-error" className="mt-2 text-sm text-red-600">
+          <p id="email-error" className="mt-2 text-sm text-red-200 lg:text-red-600">
               {fieldErrors.email}
             </p>
           )}
@@ -156,20 +148,20 @@ export default function LoginForm({ logoUnab, onLogin }: LoginFormProps) {
         </button>
       </form>
 
-      <div className="mt-12">
+      <div className="mt-14">
         <div className="flex items-center gap-4">
-          <div className="h-px flex-1 bg-slate-200" />
-          <p className="text-xs font-bold uppercase tracking-[0.28em] text-slate-500">
-            Proyecto academico
+          <div className="h-px flex-1 bg-blue-200/30 lg:bg-slate-200" />
+          <p className="max-w-[18rem] text-center text-sm font-semibold leading-5 text-white sm:max-w-none lg:text-xs lg:text-slate-500">
+            Proyecto de Titulo · Ingenieria en Computacion e Informatica
           </p>
-          <div className="h-px flex-1 bg-slate-200" />
+          <div className="h-px flex-1 bg-blue-200/30 lg:bg-slate-200" />
         </div>
 
-        <div className="mt-7 flex justify-center">
+        <div className="mt-10 flex justify-center">
           <img
             src={logoUnab}
             alt="Logo de la Universidad Andres Bello"
-            className="h-20 w-auto object-contain sm:h-24"
+            className="h-16 w-auto object-contain mix-blend-screen brightness-0 invert sm:h-20 lg:h-24 lg:mix-blend-normal lg:brightness-100 lg:invert-0"
           />
         </div>
       </div>

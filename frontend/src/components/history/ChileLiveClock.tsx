@@ -6,11 +6,13 @@ const CHILE_TIME_ZONE = 'America/Santiago';
 interface ChileLiveClockProps {
   variant?: 'light' | 'sidebar';
   compact?: boolean;
+  framed?: boolean;
 }
 
 export default function ChileLiveClock({
   variant = 'light',
   compact = false,
+  framed = true,
 }: ChileLiveClockProps) {
   const [now, setNow] = useState(() => new Date());
   const isSidebar = variant === 'sidebar';
@@ -48,7 +50,11 @@ export default function ChileLiveClock({
     <section
       className={
         isSidebar
-          ? `flex w-full items-center gap-3 rounded-2xl border border-white/10 bg-white/10 px-3 py-3 text-left shadow-sm shadow-blue-950/20 transition-all duration-300 ${
+          ? `flex w-full items-center gap-3 text-left transition-all duration-300 ${
+              framed
+                ? 'rounded-2xl border border-white/10 bg-white/10 px-3 py-3 shadow-sm shadow-blue-950/20'
+                : 'px-0 py-2'
+            } ${
               compact ? 'lg:flex-col lg:gap-2 lg:px-2 lg:py-3 lg:text-center' : ''
             }`
           : 'flex min-w-[220px] items-center gap-3 rounded-2xl border border-slate-200 bg-white px-4 py-3 text-left shadow-sm'

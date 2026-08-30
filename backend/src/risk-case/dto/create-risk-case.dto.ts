@@ -1,10 +1,4 @@
-import {
-  IsIn,
-  IsInt,
-  IsNotEmpty,
-  IsOptional,
-  IsString,
-} from 'class-validator';
+import { IsIn, IsInt, IsNotEmpty, IsOptional, IsString } from 'class-validator';
 
 export const RISK_CASE_STATUSES = [
   'PENDIENTE',
@@ -18,11 +12,7 @@ export const RISK_CASE_REVIEW_RESULTS = [
   'OPERACION_SOSPECHOSA',
 ] as const;
 
-export const RISK_CASE_PRIORITIES = [
-  'NORMAL',
-  'ALTA',
-  'URGENTE',
-] as const;
+export const RISK_CASE_PRIORITIES = ['NORMAL', 'ALTA', 'URGENTE'] as const;
 
 export class CreateRiskCaseDto {
   @IsInt()

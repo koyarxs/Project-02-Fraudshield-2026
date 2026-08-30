@@ -39,10 +39,7 @@ export class DashboardMetricService {
     });
   }
 
-  update(
-    id: number,
-    updateDashboardMetricDto: UpdateDashboardMetricDto,
-  ) {
+  update(id: number, updateDashboardMetricDto: UpdateDashboardMetricDto) {
     return this.prisma.dashboardMetric.update({
       where: { id },
       data: {

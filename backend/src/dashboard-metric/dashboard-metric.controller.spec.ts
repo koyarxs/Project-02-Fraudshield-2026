@@ -12,7 +12,9 @@ describe('DashboardMetricController', () => {
       providers: [DashboardMetricService, PrismaService],
     }).compile();
 
-    controller = module.get<DashboardMetricController>(DashboardMetricController);
+    controller = module.get<DashboardMetricController>(
+      DashboardMetricController,
+    );
   });
 
   it('should be defined', () => {

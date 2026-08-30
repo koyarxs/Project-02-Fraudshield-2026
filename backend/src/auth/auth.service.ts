@@ -23,6 +23,15 @@ export class AuthService {
       throw new UnauthorizedException('Credenciales incorrectas');
     }
 
+    if (!user.active) {
+      await this.createAuditLog(
+        'LOGIN_FAILED',
+        `Intento de acceso con cuenta inactiva: ${email}.`,
+        user.id,
+      );
+      throw new UnauthorizedException('Credenciales incorrectas');
+    }
+
     const passwordIsValid = await bcrypt.compare(password, user.password);
 
     if (!passwordIsValid) {
@@ -43,6 +52,7 @@ export class AuthService {
     const payload = {
       sub: user.id,
       email: user.email,
+      role: user.role,
     };
 
     return {
@@ -51,6 +61,8 @@ export class AuthService {
         id: user.id,
         name: user.name,
         email: user.email,
+        role: user.role,
+        active: user.active,
       },
     };
   }

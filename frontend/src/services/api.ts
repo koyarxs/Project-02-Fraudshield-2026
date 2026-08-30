@@ -25,7 +25,7 @@ api.interceptors.response.use(
 
     if (
       typeof window !== 'undefined' &&
-      (status === 401 || status === 403)
+      status === 401
     ) {
       localStorage.removeItem('access_token');
       localStorage.removeItem('user');

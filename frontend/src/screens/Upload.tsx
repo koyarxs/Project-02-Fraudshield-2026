@@ -8,6 +8,7 @@ import { useNavigate } from 'react-router-dom';
 import axios from 'axios';
 import { FiCheckCircle, FiFileText, FiUploadCloud } from 'react-icons/fi';
 import CsvPreview from '../components/upload/CsvPreview';
+import DownloadTemplateButton from '../components/upload/DownloadTemplateButton';
 import FileStructureGuide from '../components/upload/FileStructureGuide';
 import ValidationErrors from '../components/upload/ValidationErrors';
 import DashboardLayout from '../components/layout/DashboardLayout';
@@ -176,16 +177,16 @@ export default function Upload() {
   return (
     <DashboardLayout>
       <main className="min-h-screen">
-        <header className="mb-8 app-card rounded-[24px] p-5">
-          <p className="text-sm font-semibold uppercase tracking-[0.2em] text-blue-600">
-            Procesamiento por lotes
+        <header className="module-sticky-header mb-8 app-card rounded-[24px] p-5">
+          <p className="text-sm font-semibold uppercase tracking-[0.16em] text-blue-700">
+            Carga de archivos
           </p>
           <h1 className="mt-2 text-3xl font-bold text-slate-950">
             Cargar archivo CSV
           </h1>
           <p className="mt-2 max-w-3xl text-slate-600">
-            Selecciona, valida y procesa archivos transaccionales con la
-            estructura real requerida por FraudShield.
+            Selecciona un archivo de transacciones para validarlo y procesarlo
+            mediante las reglas de riesgo R1–R5.
           </p>
         </header>
 
@@ -232,7 +233,7 @@ export default function Upload() {
                     </p>
                     <div className="mt-4 flex flex-wrap justify-center gap-2">
                       <span className="rounded-full bg-white px-3 py-1 text-sm font-medium text-slate-600 shadow-sm">
-                        CSV
+                        Formato CSV
                       </span>
                       <span className="rounded-full bg-white px-3 py-1 text-sm font-medium text-slate-600 shadow-sm">
                         {formatFileSize(selectedFile.size)}
@@ -240,6 +241,19 @@ export default function Upload() {
                       {validation && (
                         <span className="rounded-full bg-white px-3 py-1 text-sm font-medium text-slate-600 shadow-sm">
                           {validation.dataRowCount} filas
+                        </span>
+                      )}
+                      {validation && (
+                        <span
+                          className={`rounded-full px-3 py-1 text-sm font-semibold shadow-sm ${
+                            validation.isValid
+                              ? 'bg-emerald-100 text-emerald-700'
+                              : 'bg-red-100 text-red-700'
+                          }`}
+                        >
+                          {validation.isValid
+                            ? 'Validación correcta'
+                            : 'Validación con errores'}
                         </span>
                       )}
                     </div>
@@ -280,7 +294,7 @@ export default function Upload() {
                       />
                     </label>
                     <p className="mt-4 text-sm text-slate-500">
-                      Formato permitido: CSV · Tamaño máximo: 10 MB
+                      Formato admitido actualmente: CSV · Tamaño máximo: 10 MB
                     </p>
                   </>
                 )}
@@ -318,29 +332,43 @@ export default function Upload() {
 
               {isProcessing && <ProcessingStatus />}
 
-              <div className="mt-6 flex flex-col-reverse gap-3 sm:flex-row sm:justify-end">
-                <button
-                  type="button"
-                  onClick={removeFile}
-                  disabled={!selectedFile || isProcessing}
-                  className="min-h-11 rounded-2xl border border-slate-300 bg-white px-6 py-3.5 font-semibold text-slate-700 transition hover:-translate-y-0.5 hover:bg-slate-50 disabled:cursor-not-allowed disabled:translate-y-0 disabled:opacity-50"
-                >
-                  Cancelar
-                </button>
-                <button
-                  type="button"
-                  onClick={handleProcessFile}
-                  disabled={
-                    !selectedFile ||
-                    !validation?.isValid ||
-                    isProcessing ||
-                    isReading
-                  }
-                  className="flex min-h-11 items-center justify-center gap-2 rounded-2xl bg-gradient-to-r from-blue-700 to-cyan-500 px-6 py-3.5 font-semibold text-white shadow-lg shadow-blue-500/20 transition hover:-translate-y-0.5 hover:shadow-xl hover:shadow-blue-500/25 disabled:cursor-not-allowed disabled:translate-y-0 disabled:from-slate-400 disabled:to-slate-400 disabled:shadow-none"
-                >
-                  {isProcessing ? 'Procesando...' : 'Procesar archivo'}
-                </button>
+              <div className="mt-6 rounded-[24px] border border-blue-100 bg-blue-50 p-5">
+                <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                  <div>
+                    <h2 className="font-bold text-blue-950">
+                      Plantilla CSV
+                    </h2>
+                    <p className="mt-1 text-sm leading-6 text-blue-800">
+                      Descarga un archivo base con los nombres de columnas
+                      esperados.
+                    </p>
+                  </div>
+                  <div className="sm:w-64">
+                    <DownloadTemplateButton />
+                  </div>
+                </div>
               </div>
+
+              {selectedFile && (
+                <div className="mt-6 flex flex-col-reverse gap-3 sm:flex-row sm:justify-end">
+                  <button
+                    type="button"
+                    onClick={removeFile}
+                    disabled={isProcessing}
+                    className="min-h-11 rounded-2xl border border-slate-300 bg-white px-6 py-3.5 font-semibold text-slate-700 transition hover:-translate-y-0.5 hover:bg-slate-50 disabled:cursor-not-allowed disabled:translate-y-0 disabled:opacity-50"
+                  >
+                    Cancelar
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleProcessFile}
+                    disabled={!validation?.isValid || isProcessing || isReading}
+                    className="flex min-h-11 items-center justify-center gap-2 rounded-2xl bg-gradient-to-r from-blue-700 to-cyan-500 px-6 py-3.5 font-semibold text-white shadow-lg shadow-blue-500/20 transition hover:-translate-y-0.5 hover:shadow-xl hover:shadow-blue-500/25 disabled:cursor-not-allowed disabled:translate-y-0 disabled:from-slate-400 disabled:to-slate-400 disabled:shadow-none"
+                  >
+                    {isProcessing ? 'Procesando...' : 'Procesar archivo'}
+                  </button>
+                </div>
+              )}
             </section>
 
             {validation && <CsvPreview validation={validation} />}
@@ -406,6 +434,10 @@ function ProcessingResult({
             <p className="mt-2 text-sm text-slate-600">
               {fileName} · {formatDate(new Date().toISOString())}
             </p>
+            <p className="mt-3 text-sm font-semibold text-slate-700">
+              {result.totalRecords.toLocaleString('es-CL')} registros
+              procesados correctamente.
+            </p>
           </div>
         </div>
       </div>
@@ -430,15 +462,17 @@ function ProcessingResult({
         <ActionButton
           label="Ver resultados"
           onClick={() => onNavigate(`/results?batchId=${result.batchId}`)}
+          variant="primary"
         />
         <ActionButton
-          label="Ver transacciones"
-          onClick={() => onNavigate('/transactions')}
-        />
-        <ActionButton label="Cargar otro archivo" onClick={onReset} />
-        <ActionButton
-          label="Ir al historial"
+          label="Consultar historial"
           onClick={() => onNavigate('/history')}
+          variant="secondary"
+        />
+        <ActionButton
+          label="Cargar otro archivo"
+          onClick={onReset}
+          variant="secondary"
         />
       </div>
     </section>
@@ -457,15 +491,21 @@ function ResultCard({ label, value }: { label: string; value: string }) {
 function ActionButton({
   label,
   onClick,
+  variant = 'primary',
 }: {
   label: string;
   onClick: () => void;
+  variant?: 'primary' | 'secondary';
 }) {
   return (
     <button
       type="button"
       onClick={onClick}
-      className="min-h-11 rounded-2xl bg-slate-950 px-5 py-3 text-sm font-semibold text-white transition hover:-translate-y-0.5 hover:bg-slate-800"
+      className={`min-h-11 rounded-2xl px-5 py-3 text-sm font-semibold transition hover:-translate-y-0.5 ${
+        variant === 'primary'
+          ? 'bg-blue-700 text-white shadow-lg shadow-blue-500/20 hover:bg-blue-800'
+          : 'border border-slate-300 bg-white text-slate-700 hover:bg-slate-50'
+      }`}
     >
       {label}
     </button>

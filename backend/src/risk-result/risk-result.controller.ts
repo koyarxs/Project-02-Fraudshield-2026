@@ -1,17 +1,28 @@
 import { UseGuards } from '@nestjs/common';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
-import { Controller, Get, Post, Body, Patch, Param, Delete } from '@nestjs/common';
+import { UserRole } from '@prisma/client';
+import { Roles } from '../auth/roles.decorator';
+import { RolesGuard } from '../auth/roles.guard';
+import {
+  Controller,
+  Get,
+  Post,
+  Body,
+  Patch,
+  Param,
+  Delete,
+} from '@nestjs/common';
 import { RiskResultService } from './risk-result.service';
 import { CreateRiskResultDto } from './dto/create-risk-result.dto';
 import { UpdateRiskResultDto } from './dto/update-risk-result.dto';
 
-@UseGuards(JwtAuthGuard)
-
+@UseGuards(JwtAuthGuard, RolesGuard)
 @Controller('risk-result')
 export class RiskResultController {
   constructor(private readonly riskResultService: RiskResultService) {}
 
   @Post()
+  @Roles(UserRole.ADMINISTRADOR)
   create(@Body() createRiskResultDto: CreateRiskResultDto) {
     return this.riskResultService.create(createRiskResultDto);
   }
@@ -27,11 +38,16 @@ export class RiskResultController {
   }
 
   @Patch(':id')
-  update(@Param('id') id: string, @Body() updateRiskResultDto: UpdateRiskResultDto) {
+  @Roles(UserRole.ADMINISTRADOR)
+  update(
+    @Param('id') id: string,
+    @Body() updateRiskResultDto: UpdateRiskResultDto,
+  ) {
     return this.riskResultService.update(+id, updateRiskResultDto);
   }
 
   @Delete(':id')
+  @Roles(UserRole.ADMINISTRADOR)
   remove(@Param('id') id: string) {
     return this.riskResultService.remove(+id);
   }

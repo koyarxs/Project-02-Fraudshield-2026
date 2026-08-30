@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   Bar,
   BarChart,
@@ -23,6 +23,7 @@ import {
 import type { IconType } from 'react-icons';
 import DashboardLayout from '../components/layout/DashboardLayout';
 import reportService, { type ReportDataset } from '../services/report.service';
+import { processingStoreService } from '../services/processing-store.service';
 import { exportRowsToCsv } from '../utils/exportCsv';
 import { formatDate, formatNumber } from '../utils/formatDate';
 import type { ApiAuditLog } from '../services/audit-log.service';
@@ -34,6 +35,7 @@ import type {
   RiskExplanation,
   RiskRuleDetail,
 } from '../types/transaction';
+import { useAuth } from '../hooks/useAuth';
 
 type ReportTab = 'processing' | 'risk' | 'cases' | 'audit';
 type RiskFilter = 'TODOS' | 'BAJO' | 'MEDIO' | 'ALTO';
@@ -101,6 +103,8 @@ const riskColors = {
   ALTO: '#ef4444',
 };
 
+const PAGE_SIZE = 10;
+
 const caseStatusLabels: Record<RiskCaseStatus, string> = {
   PENDIENTE: 'Pendiente',
   EN_REVISION: 'En revisión',
@@ -141,6 +145,11 @@ const ruleDefaults: RuleActivation[] = [
 ];
 
 export default function Reports() {
+  const { user } = useAuth();
+  const isAdministrator = user?.role === 'ADMINISTRADOR';
+  const visibleTabs = isAdministrator
+    ? tabs
+    : tabs.filter((tab) => tab.id !== 'audit');
   const [dataset, setDataset] = useState<ReportDataset>(emptyDataset);
   const [filters, setFilters] = useState<ReportFilters>(initialFilters);
   const [activeTab, setActiveTab] = useState<ReportTab>('processing');
@@ -148,23 +157,36 @@ export default function Reports() {
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [error, setError] = useState('');
   const [message, setMessage] = useState('');
+  const [dashboardStoredTransactions, setDashboardStoredTransactions] =
+    useState(0);
 
-  const loadReports = async () => {
+  const loadReports = useCallback(async () => {
     setIsRefreshing(true);
     setError('');
 
     try {
-      setDataset(await reportService.getDataset());
+      setDataset(await reportService.getDataset(isAdministrator));
     } catch {
       setError('No fue posible cargar los datos reales de reportabilidad.');
     } finally {
       setIsLoading(false);
       setIsRefreshing(false);
     }
-  };
+  }, [isAdministrator]);
 
   useEffect(() => {
     void loadReports();
+  }, [loadReports]);
+
+  useEffect(() => {
+    const updateStoredTotal = () => {
+      setDashboardStoredTransactions(
+        processingStoreService.getTotals().totalRecords,
+      );
+    };
+
+    updateStoredTotal();
+    return processingStoreService.subscribe(updateStoredTotal);
   }, []);
 
   const batchOptions = useMemo(
@@ -200,13 +222,26 @@ export default function Reports() {
   );
 
   const filteredAuditLogs = useMemo(
-    () => filterAuditLogs(dataset.auditLogs, filters),
-    [dataset.auditLogs, filters],
+    () =>
+      filterAuditLogs(
+        dataset.auditLogs,
+        filters,
+        dataset.transactions,
+        dataset.cases,
+        batchStatusById,
+      ),
+    [
+      batchStatusById,
+      dataset.auditLogs,
+      dataset.cases,
+      dataset.transactions,
+      filters,
+    ],
   );
 
   const batchRows = useMemo(
-    () => buildBatchRows(dataset.batches, filteredTransactions, filteredCases),
-    [dataset.batches, filteredCases, filteredTransactions],
+    () => buildBatchRows(dataset.batches, dataset.transactions, dataset.cases),
+    [dataset.batches, dataset.cases, dataset.transactions],
   );
 
   const filteredBatchRows = useMemo(
@@ -214,16 +249,64 @@ export default function Reports() {
     [batchRows, filters],
   );
 
+  const filteredBatchIds = useMemo(
+    () => new Set(filteredBatchRows.map((row) => row.id)),
+    [filteredBatchRows],
+  );
+
+  const summaryTransactions = useMemo(
+    () =>
+      dataset.transactions.filter((transaction) =>
+        filteredBatchIds.has(transaction.batchId),
+      ),
+    [dataset.transactions, filteredBatchIds],
+  );
+
+  const summaryCases = useMemo(
+    () => {
+      const transactionBatchById = new Map(
+        dataset.transactions.map((transaction) => [
+          transaction.id,
+          transaction.batchId,
+        ]),
+      );
+
+      return dataset.cases.filter((riskCase) => {
+        const batchId = getCaseBatchId(riskCase, transactionBatchById);
+
+        return batchId !== undefined && filteredBatchIds.has(batchId);
+      });
+    },
+    [dataset.cases, dataset.transactions, filteredBatchIds],
+  );
+
+  const summaryAuditLogs = useMemo(
+    () =>
+      filterAuditLogsByBatchIds(
+        dataset.auditLogs,
+        filteredBatchIds,
+        dataset.transactions,
+        dataset.cases,
+      ),
+    [
+      dataset.auditLogs,
+      dataset.cases,
+      dataset.transactions,
+      filteredBatchIds,
+    ],
+  );
+
   const kpis = useMemo(
     () => ({
-      batches: filteredBatchRows.length,
-      transactions: filteredTransactions.length,
-      highRisk: filteredTransactions.filter(
+      batches: filteredBatchRows.filter((row) => row.status === 'COMPLETED')
+        .length,
+      transactions: summaryTransactions.length,
+      highRisk: summaryTransactions.filter(
         (transaction) => getRiskLevel(transaction) === 'ALTO',
       ).length,
-      cases: filteredCases.length,
+      cases: summaryCases.length,
     }),
-    [filteredBatchRows.length, filteredCases.length, filteredTransactions],
+    [filteredBatchRows, summaryCases, summaryTransactions],
   );
 
   const riskDistribution = useMemo(
@@ -231,7 +314,7 @@ export default function Reports() {
       {
         name: 'Bajo',
         key: 'BAJO',
-        value: filteredTransactions.filter(
+        value: summaryTransactions.filter(
           (transaction) => getRiskLevel(transaction) === 'BAJO',
         ).length,
         color: riskColors.BAJO,
@@ -239,7 +322,7 @@ export default function Reports() {
       {
         name: 'Medio',
         key: 'MEDIO',
-        value: filteredTransactions.filter(
+        value: summaryTransactions.filter(
           (transaction) => getRiskLevel(transaction) === 'MEDIO',
         ).length,
         color: riskColors.MEDIO,
@@ -247,13 +330,13 @@ export default function Reports() {
       {
         name: 'Alto',
         key: 'ALTO',
-        value: filteredTransactions.filter(
+        value: summaryTransactions.filter(
           (transaction) => getRiskLevel(transaction) === 'ALTO',
         ).length,
         color: riskColors.ALTO,
       },
     ],
-    [filteredTransactions],
+    [summaryTransactions],
   );
 
   const caseStatusDistribution = useMemo(
@@ -261,14 +344,14 @@ export default function Reports() {
       {
         name: 'Pendiente',
         status: 'PENDIENTE',
-        value: filteredCases.filter((riskCase) => riskCase.status === 'PENDIENTE')
+        value: summaryCases.filter((riskCase) => riskCase.status === 'PENDIENTE')
           .length,
         color: '#f59e0b',
       },
       {
         name: 'En revisión',
         status: 'EN_REVISION',
-        value: filteredCases.filter(
+        value: summaryCases.filter(
           (riskCase) => riskCase.status === 'EN_REVISION',
         ).length,
         color: '#2563eb',
@@ -276,17 +359,17 @@ export default function Reports() {
       {
         name: 'Resuelto',
         status: 'RESUELTO',
-        value: filteredCases.filter((riskCase) => riskCase.status === 'RESUELTO')
+        value: summaryCases.filter((riskCase) => riskCase.status === 'RESUELTO')
           .length,
         color: '#10b981',
       },
     ],
-    [filteredCases],
+    [summaryCases],
   );
 
   const ruleActivations = useMemo(
-    () => buildRuleActivations(filteredTransactions),
-    [filteredTransactions],
+    () => buildRuleActivations(summaryTransactions),
+    [summaryTransactions],
   );
 
   const handleFilterChange = (key: keyof ReportFilters, value: string) => {
@@ -303,47 +386,40 @@ export default function Reports() {
   };
 
   const handleExport = () => {
+    const exportRows = buildExportRows(
+      activeTab,
+      filteredBatchRows,
+      filteredTransactions,
+      filteredCases,
+      filteredAuditLogs,
+    );
     const exported = exportRowsToCsv(
-      filteredBatchRows.map((row) => ({
-        lote: row.id,
-        archivo: row.fileName,
-        fecha: row.date,
-        transacciones: row.transactions,
-        bajo: row.low,
-        medio: row.medium,
-        alto: row.high,
-        casos: row.cases,
-        estado: row.status,
-      })),
-      `fraudshield-reporte-${new Date().toISOString().slice(0, 10)}.csv`,
+      exportRows,
+      `fraudshield-${activeTab}-${new Date().toISOString().slice(0, 10)}.csv`,
     );
 
     setMessage(
       exported
-        ? 'CSV generado con los filtros actuales.'
-        : 'No existen lotes visibles para exportar.',
+        ? `Reporte de ${tabs.find((tab) => tab.id === activeTab)?.label.toLowerCase()} exportado con los filtros actuales.`
+        : 'No existen registros visibles para exportar.',
     );
-  };
-
-  const handlePdf = () => {
-    window.print();
   };
 
   return (
     <DashboardLayout>
-      <div className="space-y-4">
-        <section className="app-card rounded-[24px] p-5 lg:p-6">
+      <div className="mx-auto w-full max-w-7xl space-y-5">
+        <section className="module-sticky-header app-card rounded-[24px] p-5 lg:p-6">
           <div className="flex flex-col gap-4 xl:flex-row xl:items-center xl:justify-between">
             <div>
               <p className="text-sm font-semibold uppercase tracking-[0.16em] text-blue-700">
                 Reportes
               </p>
               <h1 className="mt-2 text-3xl font-bold text-slate-950">
-                Análisis y exportación operacional de FraudShield.
+                Consolidación de resultados operacionales
               </h1>
               <p className="mt-2 max-w-3xl text-sm leading-6 text-slate-600">
-                Indicadores construidos desde lotes, transacciones, casos y
-                auditoría registrados en PostgreSQL.
+                Consulta y exporta la información disponible según el período y
+                los filtros seleccionados.
               </p>
             </div>
 
@@ -362,19 +438,11 @@ export default function Reports() {
               </button>
               <button
                 type="button"
-                onClick={handlePdf}
-                className="inline-flex items-center justify-center gap-2 rounded-2xl border border-slate-200 bg-white px-5 py-3 text-sm font-semibold text-slate-700 shadow-sm transition hover:-translate-y-0.5 hover:border-blue-200 hover:bg-blue-50 hover:text-blue-700"
-              >
-                <FiFileText className="h-4 w-4" aria-hidden="true" />
-                Generar PDF
-              </button>
-              <button
-                type="button"
                 onClick={handleExport}
                 className="inline-flex items-center justify-center gap-2 rounded-2xl bg-slate-950 px-5 py-3 text-sm font-semibold text-white shadow-lg shadow-slate-900/15 transition hover:-translate-y-0.5 hover:bg-slate-800"
               >
                 <FiDownload className="h-4 w-4" aria-hidden="true" />
-                Exportar CSV
+                Exportar reporte filtrado
               </button>
             </div>
           </div>
@@ -403,23 +471,23 @@ export default function Reports() {
           </section>
         ) : (
           <>
-            <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+            <section className="grid auto-rows-fr gap-4 sm:grid-cols-2 xl:grid-cols-4">
               <ReportKpi
                 title="Lotes procesados"
                 value={kpis.batches}
-                description="Lotes visibles según filtros."
+                description="Lotes completados visibles según los filtros."
                 icon={FiArchive}
                 tone="blue"
               />
               <ReportKpi
                 title="Transacciones analizadas"
                 value={kpis.transactions}
-                description="Transacciones clasificadas del período."
+                description="Transacciones persistidas en la API según filtros."
                 icon={FiFileText}
                 tone="cyan"
               />
               <ReportKpi
-                title="Riesgo alto"
+                title="Transacciones de riesgo alto"
                 value={kpis.highRisk}
                 description="Operaciones con revisión prioritaria."
                 icon={FiAlertTriangle}
@@ -428,14 +496,14 @@ export default function Reports() {
               <ReportKpi
                 title="Casos generados"
                 value={kpis.cases}
-                description="Casos operacionales asociados."
+                description="Casos asociados a los lotes visibles."
                 icon={FiLayers}
                 tone="emerald"
               />
             </section>
 
             <section className="app-card rounded-[24px] p-5 lg:p-6">
-              <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-6">
+              <div className="grid min-w-0 gap-3 md:grid-cols-2 xl:grid-cols-[repeat(5,minmax(130px,0.8fr))_minmax(220px,1.3fr)]">
                 <FilterField label="Desde">
                   <input
                     type="date"
@@ -526,6 +594,15 @@ export default function Reports() {
             </section>
 
             <section className="app-card rounded-[24px] p-5 lg:p-6">
+              {dashboardStoredTransactions !== dataset.transactions.length ? (
+                <div className="mb-5 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm leading-6 text-amber-900">
+                  <strong>Fuentes actualmente diferentes:</strong> Reportes
+                  consulta {formatNumber(dataset.transactions.length)}{' '}
+                  transacciones persistidas mediante la API, mientras Dashboard
+                  utiliza actualmente un resumen local del navegador. Por esta
+                  razón los totales pueden no coincidir.
+                </div>
+              ) : null}
               <div className="grid gap-4 lg:grid-cols-[minmax(0,1.2fr)_minmax(280px,0.8fr)]">
                 <div>
                   <h2 className="text-lg font-bold text-slate-950">
@@ -535,19 +612,15 @@ export default function Reports() {
                     El período contiene {formatNumber(kpis.batches)} lotes,
                     {` ${formatNumber(kpis.transactions)} `}transacciones
                     analizadas y {formatNumber(kpis.cases)} casos generados.
-                    Riesgo alto representa {formatNumber(kpis.highRisk)}
+                    Riesgo alto representa {formatNumber(kpis.highRisk)}{' '}
                     operaciones dentro del universo filtrado.
                   </p>
                 </div>
                 <div className="grid gap-3 sm:grid-cols-3 lg:grid-cols-1">
-                  <MiniSummary label="Eventos de auditoría" value={filteredAuditLogs.length} />
+                  <MiniSummary label="Eventos de auditoría" value={summaryAuditLogs.length} />
                   <MiniSummary
-                    label="Casos abiertos"
-                    value={
-                      filteredCases.filter(
-                        (riskCase) => riskCase.status !== 'RESUELTO',
-                      ).length
-                    }
+                    label="Casos generados"
+                    value={summaryCases.length}
                   />
                   <MiniSummary
                     label="Reglas activadas"
@@ -562,7 +635,7 @@ export default function Reports() {
 
             <section className="app-card rounded-[24px] p-5 lg:p-6">
               <div className="flex flex-wrap gap-2">
-                {tabs.map((tab) => {
+                {visibleTabs.map((tab) => {
                   const Icon = tab.icon;
                   const isActive = activeTab === tab.id;
 
@@ -614,69 +687,83 @@ export default function Reports() {
 }
 
 function ProcessingTab({ rows }: { rows: BatchReportRow[] }) {
+  const pagination = useReportPagination(rows);
+
   if (rows.length === 0) {
     return <EmptyState text="No existen lotes que coincidan con los filtros." />;
   }
 
   return (
-    <div className="overflow-x-auto rounded-2xl border border-slate-200">
-      <table className="min-w-[1040px] divide-y divide-slate-200 bg-white">
-        <thead className="bg-slate-50">
-          <tr>
-            {[
-              'Lote',
-              'Archivo',
-              'Fecha',
-              'Transacciones',
-              'Bajo',
-              'Medio',
-              'Alto',
-              'Casos',
-              'Estado',
-            ].map((column) => (
-              <th
-                key={column}
-                className="whitespace-nowrap px-3 py-2.5 text-left text-xs font-bold uppercase tracking-[0.12em] text-slate-500"
-              >
-                {column}
-              </th>
-            ))}
-          </tr>
-        </thead>
-        <tbody className="divide-y divide-slate-100">
-          {rows.map((row) => (
-            <tr key={row.id} className="align-top hover:bg-blue-50/40">
-              <td className="whitespace-nowrap px-3 py-2.5 text-sm font-bold text-slate-950">
-                #{row.id}
-              </td>
-              <td className="min-w-60 px-3 py-2.5 text-sm font-semibold text-slate-700">
-                {row.fileName}
-              </td>
-              <td className="whitespace-nowrap px-3 py-2.5 text-sm text-slate-600">
-                {formatDate(row.date)}
-              </td>
-              <td className="whitespace-nowrap px-3 py-2.5 text-sm font-semibold text-slate-800">
-                {formatNumber(row.transactions)}
-              </td>
-              <td className="whitespace-nowrap px-3 py-2.5 text-sm font-semibold text-emerald-700">
-                {formatNumber(row.low)}
-              </td>
-              <td className="whitespace-nowrap px-3 py-2.5 text-sm font-semibold text-amber-700">
-                {formatNumber(row.medium)}
-              </td>
-              <td className="whitespace-nowrap px-3 py-2.5 text-sm font-semibold text-red-700">
-                {formatNumber(row.high)}
-              </td>
-              <td className="whitespace-nowrap px-3 py-2.5 text-sm font-semibold text-blue-700">
-                {formatNumber(row.cases)}
-              </td>
-              <td className="whitespace-nowrap px-3 py-2.5">
-                <StatusBadge value={row.status ?? 'SIN_ESTADO'} />
-              </td>
+    <div>
+      <div className="overflow-hidden rounded-2xl border border-slate-200">
+        <table className="hidden w-full table-fixed divide-y divide-slate-200 bg-white xl:table">
+          <thead className="bg-slate-50">
+            <tr>
+              <TableHeader className="w-[27%]">Archivo y lote</TableHeader>
+              <TableHeader className="w-[18%]">Fecha</TableHeader>
+              <TableHeader className="w-[13%]">Estado</TableHeader>
+              <TableHeader className="w-[14%]">Transacciones</TableHeader>
+              <TableHeader className="w-[16%]">Riesgo A / M / B</TableHeader>
+              <TableHeader className="w-[12%]">Casos</TableHeader>
             </tr>
+          </thead>
+          <tbody className="divide-y divide-slate-100">
+            {pagination.items.map((row) => (
+              <tr key={row.id} className="align-middle hover:bg-blue-50/40">
+                <td className="px-3 py-3">
+                  <p className="break-words text-sm font-semibold text-slate-800">
+                    {row.fileName}
+                  </p>
+                  <p className="mt-1 text-xs font-bold text-blue-700">
+                    Lote #{row.id}
+                  </p>
+                </td>
+                <td className="px-3 py-3 text-sm text-slate-600">
+                  {formatDate(row.date)}
+                </td>
+                <td className="px-3 py-3">
+                  <StatusBadge value={row.status ?? 'SIN_ESTADO'} />
+                </td>
+                <td className="px-3 py-3 text-sm font-semibold text-slate-800">
+                  {formatNumber(row.transactions)}
+                </td>
+                <td className="px-3 py-3 text-sm font-semibold text-slate-700">
+                  <span className="text-red-700">{row.high}</span> /{' '}
+                  <span className="text-amber-700">{row.medium}</span> /{' '}
+                  <span className="text-emerald-700">{row.low}</span>
+                </td>
+                <td className="px-3 py-3 text-sm font-semibold text-blue-700">
+                  {formatNumber(row.cases)}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+        <div className="divide-y divide-slate-100 bg-white xl:hidden">
+          {pagination.items.map((row) => (
+            <article key={row.id} className="p-4">
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <p className="break-words text-sm font-bold text-slate-950">
+                    {row.fileName}
+                  </p>
+                  <p className="mt-1 text-xs font-bold text-blue-700">
+                    Lote #{row.id}
+                  </p>
+                </div>
+                <StatusBadge value={row.status ?? 'SIN_ESTADO'} />
+              </div>
+              <div className="mt-3 grid grid-cols-2 gap-3 text-sm text-slate-600 sm:grid-cols-4">
+                <ReportValue label="Fecha" value={formatDate(row.date)} />
+                <ReportValue label="Transacciones" value={formatNumber(row.transactions)} />
+                <ReportValue label="Riesgo A / M / B" value={`${row.high} / ${row.medium} / ${row.low}`} />
+                <ReportValue label="Casos" value={formatNumber(row.cases)} />
+              </div>
+            </article>
           ))}
-        </tbody>
-      </table>
+        </div>
+      </div>
+      <ReportPagination {...pagination} />
     </div>
   );
 }
@@ -793,6 +880,7 @@ function CasesTab({
   }>;
 }) {
   const total = statusDistribution.reduce((sum, item) => sum + item.value, 0);
+  const pagination = useReportPagination(cases);
 
   return (
     <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_420px]">
@@ -826,32 +914,49 @@ function CasesTab({
         )}
       </section>
 
-      <section className="rounded-[24px] border border-slate-200 bg-white p-5">
-        <h2 className="text-lg font-bold text-slate-950">Casos recientes</h2>
+      <section className="min-w-0 rounded-[24px] border border-slate-200 bg-white p-5">
+        <h2 className="text-lg font-bold text-slate-950">Resumen de casos</h2>
         {cases.length === 0 ? (
           <EmptyState text="No hay casos visibles." />
         ) : (
-          <div className="mt-4 space-y-3">
-            {cases.slice(0, 6).map((riskCase) => (
-              <div
-                key={riskCase.id}
-                className="rounded-2xl border border-slate-100 bg-slate-50 px-4 py-3"
-              >
-                <div className="flex items-center justify-between gap-3">
-                  <p className="text-sm font-bold text-slate-950">
-                    Caso #{riskCase.id}
-                  </p>
-                  <StatusBadge value={caseStatusLabels[riskCase.status]} />
-                </div>
-                <p className="mt-2 text-xs leading-5 text-slate-600">
-                  Riesgo {riskCase.riskLevelSnapshot} · Score{' '}
-                  {riskCase.scoreSnapshot}
-                </p>
-                <p className="mt-1 text-xs text-slate-500">
-                  {formatDate(riskCase.updatedAt)}
-                </p>
-              </div>
-            ))}
+          <div className="mt-4">
+            <div className="divide-y divide-slate-100 overflow-hidden rounded-2xl border border-slate-200">
+              {pagination.items.map((riskCase) => (
+                <article key={riskCase.id} className="bg-white px-4 py-3">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div>
+                      <p className="text-sm font-bold text-slate-950">
+                        Caso #{riskCase.id}
+                      </p>
+                      <p className="mt-1 text-xs text-slate-500">
+                        {riskCase.transaction?.transactionCode ??
+                          `Transacción #${riskCase.transactionId}`}
+                      </p>
+                    </div>
+                    <StatusBadge value={caseStatusLabels[riskCase.status]} />
+                  </div>
+                  <div className="mt-3 grid grid-cols-2 gap-3 text-sm sm:grid-cols-3">
+                    <ReportValue
+                      label="Riesgo y score"
+                      value={`${riskCase.riskLevelSnapshot} · ${riskCase.scoreSnapshot}`}
+                    />
+                    <ReportValue
+                      label="Responsable"
+                      value={
+                        riskCase.responsibleUser?.name ??
+                        riskCase.responsibleName ??
+                        'Sin asignar'
+                      }
+                    />
+                    <ReportValue
+                      label="Actualización"
+                      value={formatDate(riskCase.updatedAt)}
+                    />
+                  </div>
+                </article>
+              ))}
+            </div>
+            <ReportPagination {...pagination} />
           </div>
         )}
       </section>
@@ -860,47 +965,80 @@ function CasesTab({
 }
 
 function AuditTab({ auditLogs }: { auditLogs: ApiAuditLog[] }) {
+  const orderedLogs = useMemo(
+    () =>
+      [...auditLogs].sort(
+        (first, second) =>
+          new Date(second.createdAt).getTime() -
+          new Date(first.createdAt).getTime(),
+      ),
+    [auditLogs],
+  );
+  const pagination = useReportPagination(orderedLogs);
+
   if (auditLogs.length === 0) {
     return <EmptyState text="No hay eventos de auditoría visibles." />;
   }
 
   return (
-    <div className="overflow-x-auto rounded-2xl border border-slate-200">
-      <table className="min-w-[920px] divide-y divide-slate-200 bg-white">
-        <thead className="bg-slate-50">
-          <tr>
-            {['Fecha', 'Módulo', 'Acción', 'Detalle', 'Usuario'].map((column) => (
-              <th
-                key={column}
-                className="whitespace-nowrap px-3 py-2.5 text-left text-xs font-bold uppercase tracking-[0.12em] text-slate-500"
-              >
-                {column}
-              </th>
-            ))}
-          </tr>
-        </thead>
-        <tbody className="divide-y divide-slate-100">
-          {auditLogs.slice(0, 80).map((log) => (
-            <tr key={log.id} className="align-top hover:bg-blue-50/40">
-              <td className="whitespace-nowrap px-3 py-2.5 text-sm text-slate-700">
-                {formatDate(log.createdAt)}
-              </td>
-              <td className="whitespace-nowrap px-3 py-2.5 text-sm font-semibold text-slate-800">
-                {log.module}
-              </td>
-              <td className="whitespace-nowrap px-3 py-2.5 text-sm text-slate-700">
-                {log.action}
-              </td>
-              <td className="min-w-96 px-3 py-2.5 text-sm text-slate-700">
-                {log.detail ?? 'No disponible'}
-              </td>
-              <td className="whitespace-nowrap px-3 py-2.5 text-sm text-slate-700">
-                {log.user?.name ?? log.user?.email ?? 'Sistema'}
-              </td>
+    <div>
+      <div className="overflow-hidden rounded-2xl border border-slate-200">
+        <table className="hidden w-full table-fixed divide-y divide-slate-200 bg-white xl:table">
+          <thead className="bg-slate-50">
+            <tr>
+              <TableHeader className="w-[18%]">Fecha y hora</TableHeader>
+              <TableHeader className="w-[17%]">Usuario o actor</TableHeader>
+              <TableHeader className="w-[16%]">Módulo</TableHeader>
+              <TableHeader className="w-[23%]">Acción</TableHeader>
+              <TableHeader className="w-[26%]">Elemento afectado</TableHeader>
             </tr>
+          </thead>
+          <tbody className="divide-y divide-slate-100">
+            {pagination.items.map((log) => (
+              <tr key={log.id} className="align-middle hover:bg-blue-50/40">
+                <td className="px-3 py-3 text-sm text-slate-600">
+                  {formatDate(log.createdAt)}
+                </td>
+                <td className="break-words px-3 py-3 text-sm font-semibold text-slate-800">
+                  {log.user?.name ?? log.user?.email ?? 'Sistema'}
+                </td>
+                <td className="px-3 py-3 text-sm font-semibold text-slate-700">
+                  {formatAuditModule(log.module)}
+                </td>
+                <td className="break-words px-3 py-3 text-sm text-slate-700">
+                  {formatAuditAction(log.action)}
+                </td>
+                <td className="break-words px-3 py-3 text-sm text-slate-700">
+                  {log.detail ?? 'No disponible'}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+        <div className="divide-y divide-slate-100 bg-white xl:hidden">
+          {pagination.items.map((log) => (
+            <article key={log.id} className="p-4">
+              <div className="flex flex-wrap items-center gap-2">
+                <StatusBadge value={formatAuditModule(log.module)} />
+                <span className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-xs font-bold text-slate-600">
+                  {log.user ? 'Usuario' : 'Sistema'}
+                </span>
+              </div>
+              <p className="mt-3 text-sm font-bold text-slate-950">
+                {formatAuditAction(log.action)}
+              </p>
+              <p className="mt-1 break-words text-sm leading-6 text-slate-600">
+                {log.detail ?? 'No disponible'}
+              </p>
+              <p className="mt-2 text-xs text-slate-500">
+                {formatDate(log.createdAt)} ·{' '}
+                {log.user?.name ?? log.user?.email ?? 'Sistema'}
+              </p>
+            </article>
           ))}
-        </tbody>
-      </table>
+        </div>
+      </div>
+      <ReportPagination {...pagination} />
     </div>
   );
 }
@@ -933,7 +1071,7 @@ function ReportKpi({
   };
 
   return (
-    <article className="group relative overflow-hidden rounded-[24px] border border-slate-200 bg-white p-5 text-left shadow-sm shadow-slate-200/70 transition hover:-translate-y-1 hover:shadow-xl hover:shadow-slate-200/80">
+    <article className="group relative h-full overflow-hidden rounded-[24px] border border-slate-200 bg-white p-5 text-left shadow-sm shadow-slate-200/70 transition hover:-translate-y-1 hover:shadow-xl hover:shadow-slate-200/80">
       <span className={`absolute inset-x-0 top-0 h-1 ${indicatorClasses[tone]}`} />
       <div className="relative flex items-start justify-between gap-4">
         <div>
@@ -963,10 +1101,91 @@ function FilterField({
   children: React.ReactNode;
 }) {
   return (
-    <label className="block text-sm font-semibold text-slate-700">
+    <label className="block min-w-0 text-sm font-semibold text-slate-700">
       {label}
       <div className="mt-2">{children}</div>
     </label>
+  );
+}
+
+function TableHeader({
+  children,
+  className = '',
+}: {
+  children: React.ReactNode;
+  className?: string;
+}) {
+  return (
+    <th
+      className={`px-3 py-2.5 text-left text-xs font-bold uppercase tracking-[0.12em] text-slate-500 ${className}`}
+    >
+      {children}
+    </th>
+  );
+}
+
+function ReportValue({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="min-w-0">
+      <p className="text-xs font-semibold text-slate-500">{label}</p>
+      <p className="mt-1 break-words font-semibold text-slate-800">{value}</p>
+    </div>
+  );
+}
+
+function useReportPagination<T>(items: T[]) {
+  const [page, setPage] = useState(1);
+  const totalPages = Math.max(1, Math.ceil(items.length / PAGE_SIZE));
+  const safePage = Math.min(page, totalPages);
+
+  useEffect(() => {
+    setPage(1);
+  }, [items]);
+
+  return {
+    items: items.slice((safePage - 1) * PAGE_SIZE, safePage * PAGE_SIZE),
+    page: safePage,
+    totalPages,
+    totalRecords: items.length,
+    onPageChange: setPage,
+  };
+}
+
+function ReportPagination({
+  page,
+  totalPages,
+  totalRecords,
+  onPageChange,
+}: {
+  page: number;
+  totalPages: number;
+  totalRecords: number;
+  onPageChange: (page: number) => void;
+}) {
+  return (
+    <div className="mt-4 flex flex-col gap-3 border-t border-slate-200 pt-4 sm:flex-row sm:items-center sm:justify-between">
+      <p className="text-sm text-slate-500">
+        Página {page} de {totalPages} · {formatNumber(totalRecords)} registros
+      </p>
+      <div className="flex gap-2">
+        <button
+          type="button"
+          onClick={() => onPageChange(Math.max(1, page - 1))}
+          disabled={page === 1}
+          className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700 disabled:cursor-not-allowed disabled:opacity-50"
+        >
+          Anterior
+        </button>
+        <button
+          type="button"
+          onClick={() => onPageChange(Math.min(totalPages, page + 1))}
+          disabled={page === totalPages}
+          className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700 disabled:cursor-not-allowed disabled:opacity-50"
+        >
+          Siguiente
+        </button>
+      </div>
+    </div>
   );
 }
 
@@ -1018,7 +1237,7 @@ function StatusBadge({ value }: { value: string }) {
     <span
       className={`inline-flex rounded-full border px-3 py-1 text-xs font-bold ${tone}`}
     >
-      {value.replaceAll('_', ' ')}
+      {formatStatus(value)}
     </span>
   );
 }
@@ -1054,13 +1273,17 @@ function buildBatchRows(
   transactions: ApiTransaction[],
   cases: ApiRiskCase[],
 ): BatchReportRow[] {
+  const transactionBatchById = new Map(
+    transactions.map((transaction) => [transaction.id, transaction.batchId]),
+  );
+
   return batches
     .map((batch) => {
       const batchTransactions = transactions.filter(
         (transaction) => transaction.batchId === batch.id,
       );
       const batchCases = cases.filter(
-        (riskCase) => riskCase.transaction?.batchId === batch.id,
+        (riskCase) => getCaseBatchId(riskCase, transactionBatchById) === batch.id,
       );
       const low = batchTransactions.filter(
         (transaction) => getRiskLevel(transaction) === 'BAJO',
@@ -1216,11 +1439,35 @@ function filterCases(
   });
 }
 
-function filterAuditLogs(logs: ApiAuditLog[], filters: ReportFilters) {
+function filterAuditLogs(
+  logs: ApiAuditLog[],
+  filters: ReportFilters,
+  transactions: ApiTransaction[],
+  cases: ApiRiskCase[],
+  batchStatusById: Map<number, string | undefined>,
+) {
   const query = filters.query.trim().toLowerCase();
+  const transactionById = new Map(
+    transactions.map((transaction) => [transaction.id, transaction]),
+  );
+  const caseById = new Map(cases.map((riskCase) => [riskCase.id, riskCase]));
 
   return logs.filter((log) => {
     const matchesDate = isInDateRange(log.createdAt, filters.fromDate, filters.toDate);
+    const related = getAuditRelation(log, transactionById, caseById);
+    const matchesBatch =
+      !filters.batchId || related.transaction?.batchId === Number(filters.batchId);
+    const matchesRisk =
+      filters.risk === 'TODOS' ||
+      getRiskLevel(related.transaction) === filters.risk ||
+      related.riskCase?.riskLevelSnapshot === filters.risk;
+    const matchesStatus = isBatchStatus(filters.status)
+      ? related.transaction !== undefined &&
+        (related.transaction.batch?.status ??
+          batchStatusById.get(related.transaction.batchId)) === filters.status
+      : isCaseStatus(filters.status)
+        ? related.riskCase?.status === filters.status
+        : true;
     const searchable = [
       log.action,
       log.module,
@@ -1231,8 +1478,62 @@ function filterAuditLogs(logs: ApiAuditLog[], filters: ReportFilters) {
       .join(' ')
       .toLowerCase();
 
-    return matchesDate && searchable.includes(query);
+    return (
+      matchesDate &&
+      matchesBatch &&
+      matchesRisk &&
+      matchesStatus &&
+      searchable.includes(query)
+    );
   });
+}
+
+function filterAuditLogsByBatchIds(
+  logs: ApiAuditLog[],
+  batchIds: ReadonlySet<number>,
+  transactions: ApiTransaction[],
+  cases: ApiRiskCase[],
+) {
+  const transactionById = new Map(
+    transactions.map((transaction) => [transaction.id, transaction]),
+  );
+  const caseById = new Map(cases.map((riskCase) => [riskCase.id, riskCase]));
+
+  return logs.filter((log) => {
+    const related = getAuditRelation(log, transactionById, caseById);
+
+    return (
+      related.transaction !== undefined &&
+      batchIds.has(related.transaction.batchId)
+    );
+  });
+}
+
+function getAuditRelation(
+  log: ApiAuditLog,
+  transactionById: Map<number, ApiTransaction>,
+  caseById: Map<number, ApiRiskCase>,
+) {
+  const detail = log.detail ?? '';
+  const transactionMatch = detail.match(/transacci[oó]n #(\d+)/i);
+  const caseMatch = detail.match(/caso #(\d+)/i);
+  const riskCase = caseMatch ? caseById.get(Number(caseMatch[1])) : undefined;
+  const transaction = transactionMatch
+    ? transactionById.get(Number(transactionMatch[1]))
+    : riskCase?.transaction ??
+      (riskCase ? transactionById.get(riskCase.transactionId) : undefined);
+
+  return { transaction, riskCase };
+}
+
+function getCaseBatchId(
+  riskCase: ApiRiskCase,
+  transactionBatchById: Map<number, number>,
+) {
+  return (
+    riskCase.transaction?.batchId ??
+    transactionBatchById.get(riskCase.transactionId)
+  );
 }
 
 function buildRuleActivations(transactions: ApiTransaction[]): RuleActivation[] {
@@ -1254,6 +1555,67 @@ function buildRuleActivations(transactions: ApiTransaction[]): RuleActivation[] 
     .sort((first, second) => second.count - first.count);
 }
 
+function buildExportRows(
+  activeTab: ReportTab,
+  batches: BatchReportRow[],
+  transactions: ApiTransaction[],
+  cases: ApiRiskCase[],
+  auditLogs: ApiAuditLog[],
+): Array<Record<string, string | number | null | undefined>> {
+  if (activeTab === 'processing') {
+    return batches.map((row) => ({
+      lote: row.id,
+      archivo: row.fileName,
+      fecha: formatDate(row.date),
+      estado: formatStatus(row.status ?? 'SIN_ESTADO'),
+      transacciones: row.transactions,
+      riesgo_alto: row.high,
+      riesgo_medio: row.medium,
+      riesgo_bajo: row.low,
+      casos: row.cases,
+    }));
+  }
+
+  if (activeTab === 'risk') {
+    return transactions.map((transaction) => ({
+      codigo: transaction.transactionCode,
+      cliente: transaction.customerCode,
+      lote: transaction.batchId,
+      fecha: formatDate(transaction.transactionDate),
+      riesgo: getRiskLevel(transaction) ?? 'Sin clasificación',
+      score: transaction.riskResult?.score,
+      reglas_activadas: getActivatedRules(transaction)
+        .map((rule) => rule.code)
+        .join(', '),
+    }));
+  }
+
+  if (activeTab === 'cases') {
+    return cases.map((riskCase) => ({
+      caso: riskCase.id,
+      transaccion:
+        riskCase.transaction?.transactionCode ?? riskCase.transactionId,
+      estado: caseStatusLabels[riskCase.status],
+      prioridad: riskCase.priority,
+      riesgo: riskCase.riskLevelSnapshot,
+      score: riskCase.scoreSnapshot,
+      responsable:
+        riskCase.responsibleUser?.name ??
+        riskCase.responsibleName ??
+        'Sin asignar',
+      actualizado: formatDate(riskCase.updatedAt),
+    }));
+  }
+
+  return auditLogs.map((log) => ({
+    fecha_hora: formatDate(log.createdAt),
+    actor: log.user?.name ?? log.user?.email ?? 'Sistema',
+    modulo: formatAuditModule(log.module),
+    accion: formatAuditAction(log.action),
+    elemento_afectado: log.detail ?? 'No disponible',
+  }));
+}
+
 function getActivatedRules(transaction: ApiTransaction): RiskRuleDetail[] {
   const details = transaction.riskResult?.ruleDetails as RiskExplanation | null;
   const rules = details?.rules ?? details?.evaluatedRules ?? [];
@@ -1261,8 +1623,8 @@ function getActivatedRules(transaction: ApiTransaction): RiskRuleDetail[] {
   return rules.filter((rule) => rule.activated !== false);
 }
 
-function getRiskLevel(transaction: ApiTransaction) {
-  return transaction.riskResult?.riskLevel?.name;
+function getRiskLevel(transaction?: ApiTransaction) {
+  return transaction?.riskResult?.riskLevel?.name;
 }
 
 function getBatchFileName(batch: ApiHistoryBatch) {
@@ -1309,4 +1671,40 @@ function isBatchStatus(status: StatusFilter) {
 
 function isCaseStatus(status: StatusFilter): status is RiskCaseStatus {
   return ['PENDIENTE', 'EN_REVISION', 'RESUELTO'].includes(status);
+}
+
+function formatStatus(value: string) {
+  const labels: Record<string, string> = {
+    COMPLETED: 'Completado',
+    FAILED: 'Fallido',
+    PENDING: 'Pendiente',
+    EN_REVISION: 'En revisión',
+    RESUELTO: 'Resuelto',
+    PENDIENTE: 'Pendiente',
+    SIN_ESTADO: 'Sin estado',
+  };
+
+  return labels[value.toUpperCase()] ?? value.replaceAll('_', ' ');
+}
+
+function formatAuditModule(module: string) {
+  const labels: Record<string, string> = {
+    AUTH: 'Autenticación',
+    TRANSACTION: 'Transacciones',
+    CONTROL_LIST: 'Listas de control',
+    RISK_CASE: 'Casos',
+  };
+
+  return labels[module] ?? module.replaceAll('_', ' ');
+}
+
+function formatAuditAction(action: string) {
+  const labels: Record<string, string> = {
+    LOGIN_SUCCESS: 'Inicio de sesión',
+    CLASSIFY_TRANSACTION: 'Clasificación de transacción',
+    UPSERT_RISK_CASE: 'Creación o actualización de caso',
+    DELETE_CONTROL_LIST_ENTRY: 'Eliminación de lista de control',
+  };
+
+  return labels[action] ?? action.replaceAll('_', ' ');
 }

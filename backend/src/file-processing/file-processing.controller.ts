@@ -8,15 +8,17 @@ import {
 } from '@nestjs/common';
 import { UseGuards } from '@nestjs/common';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
+import { UserRole } from '@prisma/client';
+import { Roles } from '../auth/roles.decorator';
+import { RolesGuard } from '../auth/roles.guard';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { FileProcessingService } from './file-processing.service';
 
-@UseGuards(JwtAuthGuard)
+@UseGuards(JwtAuthGuard, RolesGuard)
+@Roles(UserRole.ADMINISTRADOR)
 @Controller('file-processing')
 export class FileProcessingController {
-  constructor(
-    private readonly fileProcessingService: FileProcessingService,
-  ) {}
+  constructor(private readonly fileProcessingService: FileProcessingService) {}
 
   @Post('upload')
   @UseInterceptors(FileInterceptor('file'))

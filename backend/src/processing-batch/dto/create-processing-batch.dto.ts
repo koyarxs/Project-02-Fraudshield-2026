@@ -1,10 +1,4 @@
-import {
-  IsIn,
-  IsInt,
-  IsOptional,
-  IsPositive,
-  Min,
-} from 'class-validator';
+import { IsIn, IsInt, IsOptional, IsPositive, Min } from 'class-validator';
 
 export class CreateProcessingBatchDto {
   @IsOptional()

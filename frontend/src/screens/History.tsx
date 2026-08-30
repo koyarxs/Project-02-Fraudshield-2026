@@ -1,19 +1,35 @@
 import axios from 'axios';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+} from 'react';
 import { Link } from 'react-router-dom';
 import {
+  FiAlertCircle,
   FiArchive,
   FiBarChart2,
+  FiCheckCircle,
+  FiClock,
   FiDownload,
   FiEye,
   FiFileText,
   FiRefreshCw,
   FiSearch,
-  FiSliders,
-  FiX,
 } from 'react-icons/fi';
 import HistoryStatusBadge from '../components/history/HistoryStatusBadge';
 import DashboardLayout from '../components/layout/DashboardLayout';
+import {
+  DetailBadge,
+  DetailField,
+  DetailGrid,
+  DetailNote,
+  DetailPanel,
+  DetailSection,
+} from '../components/ui/DetailPanel';
 import { historyService } from '../services/history.service';
 import type { HistoryRecord, HistoryRisk } from '../types/history';
 import { exportRowsToCsv } from '../utils/exportCsv';
@@ -210,25 +226,7 @@ export default function History() {
   return (
     <DashboardLayout>
       <div className="space-y-4">
-        <section className="rounded-[24px] border border-blue-100 bg-blue-50/70 px-5 py-4 text-sm leading-6 text-blue-900">
-          {records.some((record) => record.source === 'api') ? (
-            <p>
-              Fuente principal: registros recuperados desde la API mediante
-              <span className="font-semibold"> GET /processing-batch</span>.
-            </p>
-          ) : (
-            <p>
-              Este historial contiene los procesamientos disponibles en la
-              sesión actual. La API no dispone todavía de una consulta histórica
-              persistente disponible para esta vista o no fue posible
-              recuperarla ahora.
-            </p>
-          )}
-        </section>
-
-        <HistorySummary summary={summary} />
-
-        <section className="app-card rounded-[24px] p-5 lg:p-6">
+        <section className="module-sticky-header app-card rounded-[24px] p-5 lg:p-6">
           <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
             <div>
               <p className="text-xs font-bold uppercase tracking-[0.18em] text-blue-700">
@@ -261,11 +259,15 @@ export default function History() {
                 className="inline-flex items-center justify-center gap-2 rounded-2xl bg-blue-700 px-4 py-2.5 text-sm font-semibold text-white shadow-lg shadow-blue-700/20 transition hover:-translate-y-0.5 hover:bg-blue-800"
               >
                 <FiDownload className="h-4 w-4" aria-hidden="true" />
-                Exportar CSV
+                Exportar historial
               </button>
             </div>
           </div>
+        </section>
 
+        <HistorySummary summary={summary} />
+
+        <section className="app-card rounded-[24px] p-5 lg:p-6">
           <HistoryFilters
             filters={draftFilters}
             statuses={availableStatuses}
@@ -338,11 +340,11 @@ export default function History() {
 
               <HistoryTable
                 records={visibleRecords}
-                sortKey={sortKey}
-                sortDirection={sortDirection}
-                onSort={handleSort}
                 onOpenDetail={setSelectedRecord}
-                onExportBatch={exportBatch}
+              />
+              <MobileHistoryCards
+                records={visibleRecords}
+                onOpenDetail={setSelectedRecord}
               />
 
               {sortedRecords.length > 10 ? (
@@ -378,24 +380,37 @@ function HistorySummary({ summary }: { summary: ReturnType<typeof getHistorySumm
   const cards = [
     { label: 'Total de lotes', value: summary.totalBatches, icon: FiArchive },
     {
-      label: 'Archivos completados',
-      value: summary.completedFiles,
-      icon: FiFileText,
+      label: 'Lotes completados',
+      value: summary.completedBatches,
+      icon: FiCheckCircle,
     },
     {
-      label: 'Archivos con error',
-      value: summary.failedFiles,
-      icon: FiSliders,
+      label: 'Lotes con error',
+      value: summary.failedBatches,
+      icon: FiAlertCircle,
+    },
+    {
+      label: 'Lotes pendientes',
+      value: summary.pendingBatches,
+      icon: FiClock,
     },
     {
       label: 'Transacciones procesadas',
       value: summary.totalTransactions,
       icon: FiBarChart2,
     },
+    {
+      label: 'Último procesamiento',
+      value: summary.lastProcessing
+        ? formatDate(summary.lastProcessing)
+        : 'No disponible',
+      icon: FiFileText,
+      isDate: true,
+    },
   ];
 
   return (
-    <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-5">
+    <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-6">
       {cards.map((card) => (
         <article key={card.label} className="app-card rounded-[22px] p-4">
           <div className="flex items-center justify-between gap-3">
@@ -405,26 +420,12 @@ function HistorySummary({ summary }: { summary: ReturnType<typeof getHistorySumm
             </span>
           </div>
           <p className="mt-3 text-2xl font-bold text-slate-950">
-            {formatNumber(card.value)}
+            {card.isDate
+              ? card.value
+              : formatNumber(card.value as number)}
           </p>
         </article>
       ))}
-
-      {summary.lastProcessing ? (
-        <article className="app-card rounded-[22px] p-4">
-          <p className="text-sm font-medium text-slate-500">
-            Último procesamiento
-          </p>
-          <p className="mt-3 text-sm font-bold text-slate-950">
-            {formatDate(summary.lastProcessing)}
-          </p>
-          {summary.dominantRisk ? (
-            <p className="mt-2 text-xs font-semibold text-slate-500">
-              Riesgo predominante: {summary.dominantRisk}
-            </p>
-          ) : null}
-        </article>
-      ) : null}
     </section>
   );
 }
@@ -468,12 +469,13 @@ function HistoryFilters({
             value={filters.status}
             options={statuses}
             onChange={(status) => onChange({ ...filters, status })}
+            getOptionLabel={formatStatusLabel}
           />
         ) : null}
 
         {hasDominantRisk ? (
           <SelectFilter
-            label="Riesgo"
+            label="Riesgo predominante"
             value={filters.dominantRisk}
             options={['Alto', 'Medio', 'Bajo']}
             onChange={(dominantRisk) =>
@@ -522,11 +524,13 @@ function SelectFilter({
   value,
   options,
   onChange,
+  getOptionLabel = (option) => option,
 }: {
   label: string;
   value: string;
   options: string[];
   onChange: (value: string) => void;
+  getOptionLabel?: (value: string) => string;
 }) {
   return (
     <label className="text-sm font-semibold text-slate-700">
@@ -539,7 +543,7 @@ function SelectFilter({
         <option value="">Todos</option>
         {options.map((option) => (
           <option key={option} value={option}>
-            {option}
+            {getOptionLabel(option)}
           </option>
         ))}
       </select>
@@ -571,131 +575,68 @@ function DateFilter({
 
 function HistoryTable({
   records,
-  sortKey,
-  sortDirection,
-  onSort,
   onOpenDetail,
-  onExportBatch,
 }: {
   records: HistoryRecord[];
-  sortKey: SortKey;
-  sortDirection: SortDirection;
-  onSort: (key: SortKey) => void;
   onOpenDetail: (record: HistoryRecord) => void;
-  onExportBatch: (record: HistoryRecord) => void;
 }) {
   return (
-    <div className="mt-4 overflow-x-auto">
-      <table className="min-w-[1280px] divide-y divide-slate-200">
+    <div className="mt-4 hidden overflow-hidden rounded-2xl border border-slate-200 md:block">
+      <table className="w-full table-fixed divide-y divide-slate-200">
         <caption className="sr-only">
           Historial de archivos y lotes procesados por FraudShield
         </caption>
         <thead>
           <tr>
-            <SortableHeader
-              label="Archivo"
-              sortId="fileName"
-              sortKey={sortKey}
-              direction={sortDirection}
-              onSort={onSort}
-            />
-            <SortableHeader
-              label="Fecha"
-              sortId="uploadedAt"
-              sortKey={sortKey}
-              direction={sortDirection}
-              onSort={onSort}
-            />
-            <th className="whitespace-nowrap px-3 py-2.5 text-left text-xs font-bold uppercase tracking-[0.12em] text-slate-500">
-              Estado
-            </th>
-            <th className="whitespace-nowrap px-3 py-2.5 text-left text-xs font-bold uppercase tracking-[0.12em] text-slate-500">
-              Tamaño
-            </th>
-            <th className="whitespace-nowrap px-3 py-2.5 text-left text-xs font-bold uppercase tracking-[0.12em] text-slate-500">
-              Batch ID
-            </th>
-            <SortableHeader
-              label="Total"
-              sortId="totalRecords"
-              sortKey={sortKey}
-              direction={sortDirection}
-              onSort={onSort}
-            />
-            <SortableHeader
-              label="Alto"
-              sortId="highRiskCount"
-              sortKey={sortKey}
-              direction={sortDirection}
-              onSort={onSort}
-            />
-            <SortableHeader
-              label="Medio"
-              sortId="mediumRiskCount"
-              sortKey={sortKey}
-              direction={sortDirection}
-              onSort={onSort}
-            />
-            <SortableHeader
-              label="Bajo"
-              sortId="lowRiskCount"
-              sortKey={sortKey}
-              direction={sortDirection}
-              onSort={onSort}
-            />
-            <th className="whitespace-nowrap px-3 py-2.5 text-left text-xs font-bold uppercase tracking-[0.12em] text-slate-500">
-              Predominante
-            </th>
-            <th className="whitespace-nowrap px-3 py-2.5 text-left text-xs font-bold uppercase tracking-[0.12em] text-slate-500">
-              Acciones
-            </th>
+            <TableHeader className="w-[27%] pl-4">Archivo / lote</TableHeader>
+            <TableHeader className="w-[13%]">Fecha</TableHeader>
+            <TableHeader className="w-[13%]">Estado</TableHeader>
+            <TableHeader className="w-[12%]">Transacciones</TableHeader>
+            <TableHeader className="w-[12%]">A / M / B</TableHeader>
+            <TableHeader className="w-[11%]">Predominante</TableHeader>
+            <TableHeader className="w-[12%]">Acciones</TableHeader>
           </tr>
         </thead>
         <tbody className="divide-y divide-slate-100">
           {records.map((record) => (
             <tr key={`${record.source}-${record.batchId}`} className="align-top transition hover:bg-slate-50">
-              <td className="whitespace-nowrap px-3 py-2.5 pl-0 text-sm font-semibold">
+              <td className="px-3 py-2.5 pl-4 text-sm font-semibold">
                 <Link
                   to={`/results?batchId=${record.batchId}`}
-                  className="text-blue-700 hover:text-blue-900"
+                  className="block truncate text-blue-700 hover:text-blue-900"
                 >
                   {record.fileName}
                 </Link>
                 <p className="mt-0.5 text-xs font-medium text-slate-500">
-                  {record.source === 'api'
-                    ? 'Almacenado correctamente'
-                    : 'Disponible en la sesión actual'}
+                  Lote #{record.batchId}
                 </p>
               </td>
-              <td className="whitespace-nowrap px-3 py-2.5 text-sm text-slate-600">
+              <td className="px-3 py-2.5 text-sm text-slate-600">
                 {formatDate(record.uploadedAt)}
               </td>
-              <td className="whitespace-nowrap px-3 py-2.5">
+              <td className="px-3 py-2.5">
                 <HistoryStatusBadge status={record.status} />
+                {isFailedStatus(record.status) && getRecordError(record) ? (
+                  <p className="mt-1 line-clamp-2 text-xs leading-5 text-red-600">
+                    {getRecordError(record)}
+                  </p>
+                ) : null}
               </td>
-              <td className="whitespace-nowrap px-3 py-2.5 text-sm text-slate-600">
-                {formatOptionalFileSize(record.fileSize)}
-              </td>
-              <td className="whitespace-nowrap px-3 py-2.5 text-sm text-slate-600">
-                #{record.batchId}
-              </td>
-              <td className="whitespace-nowrap px-3 py-2.5 text-sm font-semibold text-slate-800">
+              <td className="px-3 py-2.5 text-sm font-semibold text-slate-800">
                 {formatOptionalNumber(record.totalRecords)}
               </td>
-              <td className="whitespace-nowrap px-3 py-2.5 text-sm font-semibold text-red-700">
-                {formatOptionalNumber(record.highRiskCount)}
+              <td className="px-3 py-2.5 text-sm font-semibold">
+                <span className="text-red-700">{formatOptionalNumber(record.highRiskCount)}</span>
+                <span className="text-slate-400"> / </span>
+                <span className="text-amber-700">{formatOptionalNumber(record.mediumRiskCount)}</span>
+                <span className="text-slate-400"> / </span>
+                <span className="text-emerald-700">{formatOptionalNumber(record.lowRiskCount)}</span>
               </td>
-              <td className="whitespace-nowrap px-3 py-2.5 text-sm font-semibold text-amber-700">
-                {formatOptionalNumber(record.mediumRiskCount)}
-              </td>
-              <td className="whitespace-nowrap px-3 py-2.5 text-sm font-semibold text-emerald-700">
-                {formatOptionalNumber(record.lowRiskCount)}
-              </td>
-              <td className="whitespace-nowrap px-3 py-2.5 text-sm font-semibold text-slate-700">
+              <td className="px-3 py-2.5 text-sm font-semibold text-slate-700">
                 {record.dominantRisk ?? 'No disponible'}
               </td>
-              <td className="whitespace-nowrap px-3 py-2.5">
-                <div className="flex flex-nowrap gap-1.5">
+              <td className="px-3 py-2.5">
+                <div className="flex flex-wrap gap-1.5">
                   <Link
                     to={`/results?batchId=${record.batchId}`}
                     className="rounded-xl border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-bold text-slate-700 hover:border-blue-200 hover:bg-blue-50 hover:text-blue-700"
@@ -717,15 +658,6 @@ function HistoryTable({
                     <FiEye className="h-3.5 w-3.5" aria-hidden="true" />
                     Detalle
                   </button>
-                  <button
-                    type="button"
-                    onClick={() => onExportBatch(record)}
-                    className="inline-flex items-center gap-1 rounded-xl border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-bold text-slate-700 hover:border-blue-200 hover:bg-blue-50 hover:text-blue-700"
-                    aria-label={`Exportar resumen del batch ${record.batchId}`}
-                  >
-                    <FiDownload className="h-3.5 w-3.5" aria-hidden="true" />
-                    Exportar
-                  </button>
                 </div>
               </td>
             </tr>
@@ -736,31 +668,105 @@ function HistoryTable({
   );
 }
 
-function SortableHeader({
-  label,
-  sortId,
-  sortKey,
-  direction,
-  onSort,
+function MobileHistoryCards({
+  records,
+  onOpenDetail,
 }: {
-  label: string;
-  sortId: SortKey;
-  sortKey: SortKey;
-  direction: SortDirection;
-  onSort: (key: SortKey) => void;
+  records: HistoryRecord[];
+  onOpenDetail: (record: HistoryRecord) => void;
 }) {
-  const active = sortId === sortKey;
-
   return (
-    <th className="whitespace-nowrap px-3 py-2.5 text-left text-xs font-bold uppercase tracking-[0.12em] text-slate-500 first:pl-0">
-      <button
-        type="button"
-        onClick={() => onSort(sortId)}
-        className="inline-flex items-center gap-1 hover:text-blue-700"
-      >
+    <div className="mt-4 space-y-3 md:hidden">
+      {records.map((record) => (
+        <article
+          key={`${record.source}-${record.batchId}`}
+          className="rounded-2xl border border-slate-200 bg-white p-4"
+        >
+          <div className="flex items-start justify-between gap-3">
+            <div className="min-w-0">
+              <Link
+                to={`/results?batchId=${record.batchId}`}
+                className="block truncate text-sm font-bold text-blue-700"
+              >
+                {record.fileName}
+              </Link>
+              <p className="mt-1 text-xs font-medium text-slate-500">
+                Lote #{record.batchId} · {formatDate(record.uploadedAt)}
+              </p>
+            </div>
+            <HistoryStatusBadge status={record.status} />
+          </div>
+
+          {isFailedStatus(record.status) && getRecordError(record) ? (
+            <p className="mt-3 rounded-xl bg-red-50 px-3 py-2 text-xs leading-5 text-red-700">
+              {getRecordError(record)}
+            </p>
+          ) : null}
+
+          <dl className="mt-3 grid grid-cols-2 gap-3 text-sm">
+            <MobileFact
+              label="Transacciones"
+              value={formatOptionalNumber(record.totalRecords)}
+            />
+            <MobileFact
+              label="A / M / B"
+              value={`${formatOptionalNumber(record.highRiskCount)} / ${formatOptionalNumber(record.mediumRiskCount)} / ${formatOptionalNumber(record.lowRiskCount)}`}
+            />
+            <MobileFact
+              label="Predominante"
+              value={record.dominantRisk ?? 'No disponible'}
+            />
+          </dl>
+
+          <div className="mt-4 flex flex-wrap gap-2">
+            <Link
+              to={`/results?batchId=${record.batchId}`}
+              className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-bold text-slate-700"
+            >
+              Ver resultados
+            </Link>
+            <Link
+              to="/transactions"
+              className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-bold text-slate-700"
+            >
+              Ver transacciones
+            </Link>
+            <button
+              type="button"
+              onClick={() => onOpenDetail(record)}
+              className="inline-flex items-center gap-1 rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-bold text-slate-700"
+            >
+              <FiEye className="h-3.5 w-3.5" aria-hidden="true" />
+              Detalle
+            </button>
+          </div>
+        </article>
+      ))}
+    </div>
+  );
+}
+
+function MobileFact({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="rounded-xl bg-slate-50 px-3 py-2">
+      <dt className="text-xs font-bold uppercase tracking-[0.12em] text-slate-500">
         {label}
-        {active ? (direction === 'asc' ? '↑' : '↓') : null}
-      </button>
+      </dt>
+      <dd className="mt-1 font-semibold text-slate-900">{value}</dd>
+    </div>
+  );
+}
+
+function TableHeader({
+  children,
+  className = '',
+}: {
+  children: ReactNode;
+  className?: string;
+}) {
+  return (
+    <th className={`px-3 py-2.5 text-left text-xs font-bold uppercase tracking-[0.12em] text-slate-500 ${className}`}>
+      {children}
     </th>
   );
 }
@@ -829,120 +835,127 @@ function BatchDetailDrawer({
   onExport: () => void;
 }) {
   return (
-    <div
-      className="fixed inset-0 z-50 bg-slate-950/35 p-4 backdrop-blur-sm"
-      role="dialog"
-      aria-modal="true"
-      aria-labelledby="batch-detail-title"
-    >
-      <div className="ml-auto flex h-full w-full max-w-xl flex-col overflow-hidden rounded-[28px] bg-white shadow-2xl shadow-slate-950/20">
-        <div className="flex items-start justify-between gap-4 border-b border-slate-200 p-5">
-          <div>
-            <p className="text-xs font-bold uppercase tracking-[0.18em] text-blue-700">
-              Detalle del lote
-            </p>
-            <h2 id="batch-detail-title" className="mt-2 text-2xl font-bold text-slate-950">
-              Batch #{record.batchId}
-            </h2>
-          </div>
-          <button
-            type="button"
-            onClick={onClose}
-            className="flex h-10 w-10 items-center justify-center rounded-2xl border border-slate-200 bg-white text-slate-600 hover:border-blue-200 hover:bg-blue-50 hover:text-blue-700"
-            aria-label="Cerrar detalle"
-          >
-            <FiX className="h-5 w-5" aria-hidden="true" />
-          </button>
-        </div>
-
-        <div className="flex-1 overflow-y-auto p-5">
-          <dl className="divide-y divide-slate-200 border-y border-slate-200">
-            <DetailRow label="Nombre del archivo" value={record.fileName} />
-            <DetailRow label="Batch ID" value={`#${record.batchId}`} />
-            <DetailRow
-              label="Uploaded File ID"
-              value={record.uploadedFileId ? `#${record.uploadedFileId}` : 'No disponible'}
-            />
-            <DetailRow label="Fecha y hora" value={formatDate(record.uploadedAt)} />
-            <DetailRow label="Tamaño" value={formatOptionalFileSize(record.fileSize)} />
-            <DetailRow label="Estado" value={record.status ?? 'No disponible'} />
-            <DetailRow label="Total" value={formatOptionalNumber(record.totalRecords)} />
-            <DetailRow label="Alto" value={formatOptionalNumber(record.highRiskCount)} />
-            <DetailRow label="Medio" value={formatOptionalNumber(record.mediumRiskCount)} />
-            <DetailRow label="Bajo" value={formatOptionalNumber(record.lowRiskCount)} />
-            <DetailRow
-              label="Nivel predominante"
-              value={record.dominantRisk ?? 'No disponible'}
-            />
-            <DetailRow
-              label="Usuario responsable"
-              value={record.responsibleUser ?? 'No disponible'}
-            />
-            <DetailRow
-              label="Confirmación"
-              value={
-                record.source === 'api'
-                  ? 'Almacenado correctamente'
-                  : 'Disponible en la sesión actual'
-              }
-            />
-          </dl>
-
-          <section className="mt-6 rounded-2xl bg-slate-50 p-4 ring-1 ring-slate-200">
-            <h3 className="text-sm font-bold text-slate-950">
-              Mensajes de validación
-            </h3>
-            {record.validationMessages.length > 0 ? (
-              <ul className="mt-3 space-y-2 text-sm text-slate-600">
-                {record.validationMessages.map((message) => (
-                  <li key={message}>{message}</li>
-                ))}
-              </ul>
-            ) : (
-              <p className="mt-3 text-sm text-slate-600">
-                No se registraron errores de validación para este lote.
-              </p>
-            )}
-          </section>
-
-          <p className="mt-4 text-sm text-slate-500">
-            Evidencia: {record.persistedEvidence}
-          </p>
-        </div>
-
-        <div className="flex flex-wrap gap-3 border-t border-slate-200 p-5">
+    <DetailPanel
+      icon={<FiArchive className="h-5 w-5" aria-hidden="true" />}
+      eyebrow="Detalle del lote"
+      title={`Lote #${record.batchId}`}
+      badge={
+        <DetailBadge tone={getHistoryDetailTone(record.status)}>
+          {formatStatusLabel(record.status)}
+        </DetailBadge>
+      }
+      meta={`${record.fileName} · ${formatDate(record.uploadedAt)}`}
+      onClose={onClose}
+      footer={
+        <>
           <Link
             to={`/results?batchId=${record.batchId}`}
-            className="rounded-2xl bg-blue-700 px-4 py-2.5 text-sm font-semibold text-white shadow-lg shadow-blue-700/20 hover:bg-blue-800"
+            className="rounded-xl bg-blue-700 px-4 py-2.5 text-sm font-semibold text-white hover:bg-blue-800"
           >
             Ver resultados
           </Link>
           <Link
             to="/transactions"
-            className="rounded-2xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 hover:border-blue-200 hover:bg-blue-50 hover:text-blue-700"
+            className="rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 hover:bg-blue-50"
           >
             Ver transacciones
           </Link>
           <button
             type="button"
             onClick={onExport}
-            className="rounded-2xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 hover:border-blue-200 hover:bg-blue-50 hover:text-blue-700"
+            className="rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 hover:bg-blue-50"
           >
             Exportar resumen
           </button>
-        </div>
-      </div>
-    </div>
+        </>
+      }
+    >
+      <DetailSection title="Resumen" tone={getHistoryDetailTone(record.status)}>
+        <DetailGrid>
+          <DetailField label="Estado" value={formatStatusLabel(record.status)} />
+          <DetailField
+            label="Fecha y hora"
+            value={formatDate(record.uploadedAt)}
+          />
+          <DetailField
+            label="Total de transacciones"
+            value={formatOptionalNumber(record.totalRecords)}
+          />
+          <DetailField
+            label="Riesgo predominante"
+            value={record.dominantRisk ?? 'No disponible'}
+          />
+        </DetailGrid>
+      </DetailSection>
+
+      <DetailSection title="Identificación">
+        <DetailGrid>
+          <DetailField label="Archivo" value={record.fileName} wide />
+          <DetailField label="Lote" value={`#${record.batchId}`} />
+          <DetailField
+            label="Archivo cargado"
+            value={record.uploadedFileId ? `#${record.uploadedFileId}` : 'No disponible'}
+          />
+          <DetailField
+            label="Tamaño"
+            value={formatOptionalFileSize(record.fileSize)}
+          />
+          <DetailField
+            label="Responsable"
+            value={record.responsibleUser ?? 'No disponible'}
+          />
+        </DetailGrid>
+      </DetailSection>
+
+      <DetailSection title="Información operacional">
+        <DetailGrid>
+          <DetailField
+            label="Riesgo alto"
+            value={formatOptionalNumber(record.highRiskCount)}
+          />
+          <DetailField
+            label="Riesgo medio"
+            value={formatOptionalNumber(record.mediumRiskCount)}
+          />
+          <DetailField
+            label="Riesgo bajo"
+            value={formatOptionalNumber(record.lowRiskCount)}
+          />
+          <DetailField
+            label="Origen del registro"
+            value={
+              record.source === 'api'
+                ? 'Historial persistido'
+                : 'Sesión actual'
+            }
+          />
+        </DetailGrid>
+      </DetailSection>
+
+      <DetailSection title="Detalle completo o trazabilidad">
+        {record.validationMessages.length > 0 ? (
+          <ul className="space-y-2 text-sm leading-6 text-slate-700">
+            {record.validationMessages.map((message) => (
+              <li key={message} className="break-words">
+                {message}
+              </li>
+            ))}
+          </ul>
+        ) : (
+          <DetailNote tone="emerald">
+            No se registraron errores de validación para este lote.
+          </DetailNote>
+        )}
+      </DetailSection>
+    </DetailPanel>
   );
 }
 
-function DetailRow({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="grid gap-1 py-3 sm:grid-cols-[160px_minmax(0,1fr)]">
-      <dt className="text-sm text-slate-500">{label}</dt>
-      <dd className="text-sm font-semibold text-slate-950">{value}</dd>
-    </div>
-  );
+function getHistoryDetailTone(status?: string) {
+  if (status === 'COMPLETED') return 'emerald' as const;
+  if (status === 'FAILED') return 'red' as const;
+  if (status === 'PENDING') return 'amber' as const;
+  return 'slate' as const;
 }
 
 function InterfaceState({
@@ -1036,22 +1049,23 @@ function sortRecords(
 function getHistorySummary(records: HistoryRecord[]) {
   const totals = records.reduce(
     (summary, record) => {
-      const normalizedStatus = record.status?.toLowerCase() ?? '';
+      const normalizedStatus = getStatusKind(record.status);
 
       return {
         totalBatches: summary.totalBatches + 1,
-        completedFiles:
-          summary.completedFiles +
-          (['completed', 'completado', 'complete', 'success'].includes(
-            normalizedStatus,
-          )
+        completedBatches:
+          summary.completedBatches +
+          (normalizedStatus === 'completed'
             ? 1
             : 0),
-        failedFiles:
-          summary.failedFiles +
-          (['failed', 'fallido', 'error', 'rejected', 'rechazado'].includes(
-            normalizedStatus,
-          )
+        failedBatches:
+          summary.failedBatches +
+          (normalizedStatus === 'failed'
+            ? 1
+            : 0),
+        pendingBatches:
+          summary.pendingBatches +
+          (normalizedStatus === 'pending'
             ? 1
             : 0),
         totalTransactions:
@@ -1064,8 +1078,9 @@ function getHistorySummary(records: HistoryRecord[]) {
     },
     {
       totalBatches: 0,
-      completedFiles: 0,
-      failedFiles: 0,
+      completedBatches: 0,
+      failedBatches: 0,
+      pendingBatches: 0,
       totalTransactions: 0,
       highRiskCount: 0,
       mediumRiskCount: 0,
@@ -1115,4 +1130,51 @@ function formatOptionalNumber(value?: number) {
 
 function formatOptionalFileSize(value?: number) {
   return typeof value === 'number' ? formatFileSize(value) : 'No disponible';
+}
+
+function getStatusKind(status?: string | null) {
+  const value = status?.trim().toLowerCase() ?? '';
+
+  if (['completed', 'completado', 'complete', 'success'].includes(value)) {
+    return 'completed';
+  }
+
+  if (['failed', 'fallido', 'error', 'rejected', 'rechazado'].includes(value)) {
+    return 'failed';
+  }
+
+  if (
+    ['pending', 'pendiente', 'processing', 'procesando', 'in_progress'].includes(
+      value,
+    )
+  ) {
+    return 'pending';
+  }
+
+  return 'unknown';
+}
+
+function formatStatusLabel(status?: string | null) {
+  const labels: Record<ReturnType<typeof getStatusKind>, string> = {
+    completed: 'Completado',
+    failed: 'Fallido',
+    pending: 'Pendiente',
+    unknown: status || 'No disponible',
+  };
+
+  return labels[getStatusKind(status)];
+}
+
+function isFailedStatus(status?: string | null) {
+  return getStatusKind(status) === 'failed';
+}
+
+function getRecordError(record: HistoryRecord) {
+  return (
+    record.validationMessages.find((message) => message.trim()) ??
+    record.histories
+      .map((history) => history.description ?? history.action)
+      .find((message) => message?.trim()) ??
+    ''
+  );
 }

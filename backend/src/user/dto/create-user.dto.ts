@@ -1,6 +1,10 @@
+import { UserRole } from '@prisma/client';
 import {
+  IsBoolean,
   IsEmail,
+  IsEnum,
   IsNotEmpty,
+  IsOptional,
   IsString,
   MinLength,
 } from 'class-validator';
@@ -25,4 +29,12 @@ export class CreateUserDto {
     message: 'La contraseña debe tener al menos 6 caracteres.',
   })
   password!: string;
+
+  @IsOptional()
+  @IsEnum(UserRole)
+  role?: UserRole;
+
+  @IsOptional()
+  @IsBoolean()
+  active?: boolean;
 }

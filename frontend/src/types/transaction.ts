@@ -92,10 +92,12 @@ export interface ApiRiskCase {
   transaction?: ApiTransaction | null;
   riskResult?: ApiRiskResult | null;
   responsibleUser?: {
-    id: number;
-    name: string;
-    email: string;
-  } | null;
+      id: number;
+      name: string;
+      email: string;
+      role: 'ADMINISTRADOR' | 'ANALISTA';
+      active: boolean;
+    } | null;
   timelineEvents?: ApiRiskCaseTimeline[];
 }
 

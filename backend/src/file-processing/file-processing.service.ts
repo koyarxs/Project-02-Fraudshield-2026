@@ -61,7 +61,7 @@ export class FileProcessingService {
         trim: true,
         columns: (headers: string[]) =>
           headers.map((header) => this.normalizeCsvHeader(header)),
-      }) as CsvTransactionRow[];
+      });
     } catch {
       throw new BadRequestException(
         'El archivo CSV no posee una estructura válida.',
@@ -222,9 +222,7 @@ export class FileProcessingService {
       );
     }
 
-    const transactionDate = new Date(
-      `${row.transactionDate}T00:00:00.000Z`,
-    );
+    const transactionDate = new Date(`${row.transactionDate}T00:00:00.000Z`);
 
     if (Number.isNaN(transactionDate.getTime())) {
       throw new BadRequestException(
@@ -258,9 +256,7 @@ export class FileProcessingService {
   }
 
   private buildTransactionDateTime(date: string, hour: string) {
-    const normalizedHour = /^\d{2}:\d{2}(:\d{2})?$/.test(hour)
-      ? hour
-      : '00:00';
+    const normalizedHour = /^\d{2}:\d{2}(:\d{2})?$/.test(hour) ? hour : '00:00';
     const timePart =
       normalizedHour.length === 5 ? `${normalizedHour}:00` : normalizedHour;
 

@@ -1,18 +1,15 @@
 import {
   BadRequestException,
+  ForbiddenException,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { Prisma } from '@prisma/client';
+import { Prisma, UserRole } from '@prisma/client';
+import type { AuthenticatedUser } from '../auth/authenticated-request.interface';
+import { NotificationService } from '../notification/notification.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateRiskCaseDto } from './dto/create-risk-case.dto';
 import { UpdateRiskCaseDto } from './dto/update-risk-case.dto';
-
-interface AuthenticatedUser {
-  userId: number;
-  email: string;
-  name?: string;
-}
 
 const caseInclude = {
   transaction: {
@@ -34,6 +31,8 @@ const caseInclude = {
       id: true,
       name: true,
       email: true,
+      role: true,
+      active: true,
     },
   },
   timelineEvents: {
@@ -60,7 +59,10 @@ const CASE_STATUS_ORDER: Record<string, number> = {
 
 @Injectable()
 export class RiskCaseService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly notificationService: NotificationService,
+  ) {}
 
   async create(
     createRiskCaseDto: CreateRiskCaseDto,
@@ -99,14 +101,15 @@ export class RiskCaseService {
     const responsibleUser =
       createRiskCaseDto.responsibleUserId !== undefined
         ? await this.findUser(createRiskCaseDto.responsibleUserId)
-        : actor;
+        : null;
+    this.validateResponsibleRole(responsibleUser);
     const responsibleName =
       createRiskCaseDto.responsibleUserId === 0
         ? 'Sin asignar'
-        : createRiskCaseDto.responsibleName ??
+        : (createRiskCaseDto.responsibleName ??
           responsibleUser?.name ??
           responsibleUser?.email ??
-          authUser?.email;
+          authUser?.email);
     const status = createRiskCaseDto.status ?? 'PENDIENTE';
     const priority =
       createRiskCaseDto.priority ??
@@ -115,6 +118,10 @@ export class RiskCaseService {
     this.validateCreateWorkflow(createRiskCaseDto, status);
 
     const resolvedAt = status === 'RESUELTO' ? new Date() : null;
+    const previousCase = await this.prisma.riskCase.findUnique({
+      where: { transactionId: transaction.id },
+      select: { responsibleUserId: true },
+    });
 
     const riskCase = await this.prisma.riskCase.upsert({
       where: {
@@ -170,11 +177,41 @@ export class RiskCaseService {
       actor?.id,
     );
 
-    return this.findOne(riskCase.id);
+    if (
+      actor &&
+      responsibleUser &&
+      responsibleUser.id !== actor.id &&
+      previousCase?.responsibleUserId !== responsibleUser.id
+    ) {
+      const assignmentEvent = await this.createTimelineEvent(
+        riskCase.id,
+        'CASE_ASSIGNED',
+        `Caso asignado a ${responsibleUser.name}.`,
+        actor.id,
+        {
+          from: previousCase?.responsibleUserId ?? null,
+          to: responsibleUser.id,
+        },
+      );
+      await this.createAuditLog(
+        'CASE_ASSIGNED',
+        `Caso #${riskCase.id} asignado a ${responsibleUser.name}.`,
+        actor.id,
+      );
+      await this.notificationService.notifyAssignment({
+        riskCaseId: riskCase.id,
+        recipientUserId: responsibleUser.id,
+        sourceId: assignmentEvent.id,
+        actor,
+      });
+    }
+
+    return this.findOne(riskCase.id, authUser);
   }
 
-  findAll() {
+  findAll(authUser?: AuthenticatedUser) {
     return this.prisma.riskCase.findMany({
+      where: this.getAccessWhere(authUser),
       orderBy: {
         updatedAt: 'desc',
       },
@@ -182,26 +219,31 @@ export class RiskCaseService {
     });
   }
 
-  async getSummary() {
+  async getSummary(authUser?: AuthenticatedUser) {
+    const access = this.getAccessWhere(authUser);
     const [pending, inReview, resolved, highRiskPending, priorityOpen] =
       await this.prisma.$transaction([
         this.prisma.riskCase.count({
           where: {
+            ...access,
             status: 'PENDIENTE',
           },
         }),
         this.prisma.riskCase.count({
           where: {
+            ...access,
             status: 'EN_REVISION',
           },
         }),
         this.prisma.riskCase.count({
           where: {
+            ...access,
             status: 'RESUELTO',
           },
         }),
         this.prisma.riskCase.count({
           where: {
+            ...access,
             status: {
               in: ['PENDIENTE', 'EN_REVISION'],
             },
@@ -210,6 +252,7 @@ export class RiskCaseService {
         }),
         this.prisma.riskCase.count({
           where: {
+            ...access,
             status: {
               not: 'RESUELTO',
             },
@@ -223,6 +266,7 @@ export class RiskCaseService {
     const [open, suspicious, discarded] = await this.prisma.$transaction([
       this.prisma.riskCase.count({
         where: {
+          ...access,
           status: {
             not: 'RESUELTO',
           },
@@ -230,11 +274,13 @@ export class RiskCaseService {
       }),
       this.prisma.riskCase.count({
         where: {
+          ...access,
           reviewResult: 'OPERACION_SOSPECHOSA',
         },
       }),
       this.prisma.riskCase.count({
         where: {
+          ...access,
           reviewResult: 'SOSPECHA_DESCARTADA',
         },
       }),
@@ -252,7 +298,7 @@ export class RiskCaseService {
     };
   }
 
-  async findOne(id: number) {
+  async findOne(id: number, authUser?: AuthenticatedUser) {
     const riskCase = await this.prisma.riskCase.findUnique({
       where: {
         id,
@@ -264,16 +310,24 @@ export class RiskCaseService {
       throw new NotFoundException('Caso no encontrado');
     }
 
+    this.assertCaseAccess(riskCase, authUser);
+
     return riskCase;
   }
 
-  findByTransaction(transactionId: number) {
-    return this.prisma.riskCase.findUnique({
+  async findByTransaction(transactionId: number, authUser?: AuthenticatedUser) {
+    const riskCase = await this.prisma.riskCase.findUnique({
       where: {
         transactionId,
       },
       include: caseInclude,
     });
+
+    if (riskCase) {
+      this.assertCaseAccess(riskCase, authUser);
+    }
+
+    return riskCase;
   }
 
   async update(
@@ -281,16 +335,26 @@ export class RiskCaseService {
     updateRiskCaseDto: UpdateRiskCaseDto,
     authUser?: AuthenticatedUser,
   ) {
-    const currentCase = await this.findOne(id);
+    const currentCase = await this.findOne(id, authUser);
+
+    if (
+      authUser?.role === UserRole.ANALISTA &&
+      (updateRiskCaseDto.responsibleName !== undefined ||
+        updateRiskCaseDto.responsibleUserId !== undefined ||
+        updateRiskCaseDto.priority !== undefined)
+    ) {
+      throw new ForbiddenException(
+        'El Analista no puede cambiar la prioridad ni la asignación del caso.',
+      );
+    }
     const actor = await this.findUser(authUser?.userId);
     const responsibleUser =
       updateRiskCaseDto.responsibleUserId !== undefined
         ? await this.findUser(updateRiskCaseDto.responsibleUserId)
         : null;
+    this.validateResponsibleRole(responsibleUser);
     const responsibleUserId =
-      updateRiskCaseDto.responsibleUserId === 0
-        ? null
-        : responsibleUser?.id;
+      updateRiskCaseDto.responsibleUserId === 0 ? null : responsibleUser?.id;
     const status = updateRiskCaseDto.status;
     const nextCaseState = {
       status: status ?? currentCase.status,
@@ -313,8 +377,7 @@ export class RiskCaseService {
       responsibleName:
         updateRiskCaseDto.responsibleUserId === 0
           ? 'Sin asignar'
-          : updateRiskCaseDto.responsibleName ??
-            currentCase.responsibleName,
+          : (updateRiskCaseDto.responsibleName ?? currentCase.responsibleName),
     };
     this.validateUpdateWorkflow(currentCase.status, nextCaseState);
 
@@ -326,6 +389,15 @@ export class RiskCaseService {
         ? responsibleUserId
         : undefined,
     );
+    const reviewContentChanged =
+      (updateRiskCaseDto.observations !== undefined &&
+        updateRiskCaseDto.observations !== currentCase.observations) ||
+      (updateRiskCaseDto.actionTaken !== undefined &&
+        updateRiskCaseDto.actionTaken !== currentCase.actionTaken) ||
+      (updateRiskCaseDto.internalComments !== undefined &&
+        updateRiskCaseDto.internalComments !== currentCase.internalComments) ||
+      (updateRiskCaseDto.reviewResult !== undefined &&
+        updateRiskCaseDto.reviewResult !== currentCase.reviewResult);
 
     const riskCase = await this.prisma.riskCase.update({
       where: {
@@ -352,9 +424,9 @@ export class RiskCaseService {
           responsibleName:
             updateRiskCaseDto.responsibleUserId === 0
               ? 'Sin asignar'
-              : updateRiskCaseDto.responsibleName ??
+              : (updateRiskCaseDto.responsibleName ??
                 responsibleUser?.name ??
-                authUser?.email,
+                authUser?.email),
           responsibleUserId,
         }),
         ...(updateRiskCaseDto.responsibleUserId === undefined &&
@@ -366,8 +438,10 @@ export class RiskCaseService {
       include: caseInclude,
     });
 
+    let notifiedAdministrator = false;
+
     for (const description of timelineDescriptions) {
-      await this.createTimelineEvent(
+      const timelineEvent = await this.createTimelineEvent(
         riskCase.id,
         description.eventType,
         description.detail,
@@ -389,15 +463,89 @@ export class RiskCaseService {
           actor?.id,
         );
       }
+
+      if (
+        description.eventType === 'CASE_ASSIGNED' &&
+        responsibleUserId &&
+        responsibleUser &&
+        responsibleUser.id !== actor?.id &&
+        actor
+      ) {
+        await this.notificationService.notifyAssignment({
+          riskCaseId: riskCase.id,
+          recipientUserId: responsibleUserId,
+          sourceId: timelineEvent.id,
+          actor,
+        });
+        if (actor.role === UserRole.ANALISTA) {
+          notifiedAdministrator = true;
+        }
+      }
+
+      if (
+        description.eventType === 'STATUS_CHANGED' &&
+        status === 'EN_REVISION' &&
+        actor
+      ) {
+        await this.notificationService.notifyAdministrators({
+          type: 'REVIEW_STARTED',
+          riskCaseId: riskCase.id,
+          sourceId: timelineEvent.id,
+          actor,
+        });
+        notifiedAdministrator = true;
+      }
+
+      if (description.eventType === 'CASE_RESOLVED' && actor) {
+        if (actor.role === UserRole.ANALISTA) {
+          await this.notificationService.notifyAdministrators({
+            type: 'CASE_RESOLVED',
+            riskCaseId: riskCase.id,
+            sourceId: timelineEvent.id,
+            actor,
+          });
+        } else {
+          await this.notificationService.notifyAnalystParticipants({
+            riskCaseId: riskCase.id,
+            sourceId: timelineEvent.id,
+            actor,
+          });
+        }
+        notifiedAdministrator = true;
+      }
     }
 
-    await this.createAuditLog(
+    const updateAudit = await this.createAuditLog(
       'UPDATE_RISK_CASE',
       `Caso #${riskCase.id} actualizado. Estado: ${riskCase.status}. Resultado: ${riskCase.reviewResult ?? 'sin resultado'}.`,
       actor?.id,
     );
 
-    return this.findOne(riskCase.id);
+    if (
+      actor?.role === UserRole.ANALISTA &&
+      riskCase.status === 'EN_REVISION' &&
+      reviewContentChanged &&
+      !notifiedAdministrator
+    ) {
+      await this.notificationService.notifyAdministrators({
+        type: 'REVIEW_UPDATED',
+        riskCaseId: riskCase.id,
+        sourceId: updateAudit.id,
+        actor,
+      });
+    }
+
+    if (
+      authUser?.role === UserRole.ANALISTA &&
+      riskCase.responsibleUserId !== authUser.userId
+    ) {
+      return this.prisma.riskCase.findUnique({
+        where: { id: riskCase.id },
+        include: caseInclude,
+      });
+    }
+
+    return this.findOne(riskCase.id, authUser);
   }
 
   remove(id: number) {
@@ -437,16 +585,44 @@ export class RiskCaseService {
     });
   }
 
-  private findUser(userId?: number) {
+  private async findUser(userId?: number) {
     if (!userId) {
       return null;
     }
 
-    return this.prisma.user.findUnique({
+    const user = await this.prisma.user.findUnique({
       where: {
         id: userId,
       },
     });
+
+    if (!user?.active) {
+      throw new BadRequestException(
+        'El responsable seleccionado no existe o está inactivo.',
+      );
+    }
+
+    return user;
+  }
+
+  private getAccessWhere(authUser?: AuthenticatedUser) {
+    return authUser?.role === UserRole.ANALISTA
+      ? { responsibleUserId: authUser.userId }
+      : {};
+  }
+
+  private assertCaseAccess(
+    riskCase: { responsibleUserId: number | null },
+    authUser?: AuthenticatedUser,
+  ) {
+    if (
+      authUser?.role === UserRole.ANALISTA &&
+      riskCase.responsibleUserId !== authUser.userId
+    ) {
+      throw new ForbiddenException(
+        'Solo puedes consultar o gestionar casos que tengas asignados.',
+      );
+    }
   }
 
   private buildTimelineDescriptions(
@@ -659,6 +835,17 @@ export class RiskCaseService {
     if (!hasResponsibleUser && !hasResponsibleName) {
       throw new BadRequestException(
         'Para avanzar el caso debes asignar un responsable.',
+      );
+    }
+  }
+
+  private validateResponsibleRole(user: { role: UserRole } | null) {
+    if (
+      user &&
+      ![UserRole.ADMINISTRADOR, UserRole.ANALISTA].includes(user.role)
+    ) {
+      throw new BadRequestException(
+        'El responsable debe ser un Administrador o Analista activo.',
       );
     }
   }

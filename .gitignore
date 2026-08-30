@@ -1,0 +1,7 @@
+# Variables locales y secretos
+.env
+.env.local
+
+# Archivos del sistema
+.DS_Store
+Thumbs.db

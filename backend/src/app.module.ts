@@ -1,4 +1,5 @@
 import { Module } from '@nestjs/common';
+import { ConfigModule } from '@nestjs/config';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
 import { PrismaModule } from './prisma/prisma.module';
@@ -16,9 +17,13 @@ import { ControlListModule } from './control-list/control-list.module';
 import { AuditLogModule } from './audit-log/audit-log.module';
 import { FileProcessingService } from './file-processing/file-processing.service';
 import { FileProcessingController } from './file-processing/file-processing.controller';
+import { NotificationModule } from './notification/notification.module';
 
 @Module({
   imports: [
+    ConfigModule.forRoot({
+      isGlobal: true,
+    }),
     PrismaModule,
     UserModule,
     AuthModule,
@@ -32,14 +37,9 @@ import { FileProcessingController } from './file-processing/file-processing.cont
     RiskCaseModule,
     ControlListModule,
     AuditLogModule,
+    NotificationModule,
   ],
-  controllers: [
-    AppController,
-    FileProcessingController,
-  ],
-  providers: [
-    AppService,
-    FileProcessingService,
-  ],
+  controllers: [AppController, FileProcessingController],
+  providers: [AppService, FileProcessingService],
 })
 export class AppModule {}

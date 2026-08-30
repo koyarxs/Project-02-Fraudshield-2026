@@ -1,6 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
 import type { IconType } from 'react-icons';
-import { useNavigate } from 'react-router-dom';
 import {
   FiActivity,
   FiAlertCircle,
@@ -26,7 +25,6 @@ const API_STATUS = 'Configurada';
 const MAX_PHOTO_SIZE = 2 * 1024 * 1024;
 
 export default function Profile() {
-  const navigate = useNavigate();
   const fileInputRef = useRef<HTMLInputElement>(null);
   const { user, logout, isAuthenticated } = useAuth();
   const [now, setNow] = useState(() => new Date());
@@ -40,6 +38,10 @@ export default function Profile() {
   const batches = processingStoreService.getAll();
   const displayName = user?.name || 'Administrador FraudShield';
   const email = user?.email || 'Correo no disponible';
+  const roleLabel =
+    user?.role === 'ANALISTA'
+      ? 'Analista de Riesgo Transaccional'
+      : 'Administrador';
 
   useEffect(() => {
     const timer = window.setInterval(() => setNow(new Date()), 30_000);
@@ -55,7 +57,6 @@ export default function Profile() {
 
   const handleLogout = () => {
     logout();
-    navigate('/login', { replace: true });
   };
 
   const handlePhotoUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
@@ -123,7 +124,7 @@ export default function Profile() {
   return (
     <DashboardLayout>
       <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_420px]">
-        <section className="app-card overflow-hidden rounded-[28px]">
+        <section className="module-sticky-header app-card overflow-hidden rounded-[28px]">
           <div className="bg-white px-6 py-7 sm:px-8">
             <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
               <div className="flex flex-col gap-5 sm:flex-row sm:items-center">
@@ -131,7 +132,7 @@ export default function Profile() {
 
                 <div className="min-w-0">
                   <p className="text-xs font-bold uppercase tracking-[0.18em] text-blue-700">
-                    Perfil del Administrador
+                    Perfil de usuario
                   </p>
                   <h2 className="mt-2 text-3xl font-bold tracking-tight text-slate-950">
                     {displayName}
@@ -144,7 +145,7 @@ export default function Profile() {
                   <div className="mt-4 flex flex-wrap gap-2">
                     <StatusPill
                       icon={FiShield}
-                      label="Administrador"
+                      label={roleLabel}
                       tone="blue"
                     />
                     <StatusPill
@@ -207,7 +208,8 @@ export default function Profile() {
                 items={[
                   ['Nombre completo', displayName],
                   ['Correo electrónico', email],
-                  ['Rol', 'Administrador'],
+                  ['Rol', roleLabel],
+                  ['Cuenta', user?.active ? 'Activa' : 'Inactiva'],
                 ]}
               />
 

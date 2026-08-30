@@ -1,6 +1,5 @@
 import type { ReactNode } from 'react';
-import { useState } from 'react';
-import { useLocation } from 'react-router-dom';
+import { useEffect, useState } from 'react';
 import Header from './Navbar';
 import Sidebar from './Sidebar';
 
@@ -9,30 +8,55 @@ interface DashboardLayoutProps {
 }
 
 export default function DashboardLayout({ children }: DashboardLayoutProps) {
-  const location = useLocation();
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
-  const headerContent =
-    pageHeaders[location.pathname] ?? pageHeaders['/dashboard'];
+  const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
+
+  useEffect(() => {
+    if (!isMobileMenuOpen) {
+      return undefined;
+    }
+
+    const previousOverflow = document.body.style.overflow;
+
+    document.body.style.overflow = 'hidden';
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        setIsMobileMenuOpen(false);
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+
+    return () => {
+      document.body.style.overflow = previousOverflow;
+      window.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [isMobileMenuOpen]);
 
   return (
-    <div className="min-h-screen bg-transparent text-slate-900">
+    <div className="min-h-screen min-w-0 bg-transparent text-slate-900">
       <Sidebar
         isCollapsed={isSidebarCollapsed}
+        isMobileOpen={isMobileMenuOpen}
         onToggle={() => setIsSidebarCollapsed((current) => !current)}
+        onMobileClose={() => setIsMobileMenuOpen(false)}
       />
 
       <div
-        className={`min-h-screen transition-[padding] duration-300 ease-out ${
-          isSidebarCollapsed ? 'lg:pl-28' : 'lg:pl-72'
+        className={`min-h-screen min-w-0 transition-[padding] duration-300 ease-out ${
+          isSidebarCollapsed ? 'md:pl-28' : 'md:pl-72'
         }`}
       >
         <Header
-          title={headerContent.title}
-          subtitle={headerContent.subtitle}
+          isMobileMenuOpen={isMobileMenuOpen}
+          onToggleMenu={() =>
+            setIsMobileMenuOpen((currentIsOpen) => !currentIsOpen)
+          }
         />
 
-        <main className="px-4 pb-10 pt-6 sm:px-6 lg:px-8">
-          <div className="mx-auto w-full max-w-7xl">
+        <main className="min-w-0 px-4 pb-10 pt-6 sm:px-6 lg:px-8">
+          <div className="mx-auto w-full max-w-7xl min-w-0">
             {children}
           </div>
         </main>
@@ -40,35 +64,3 @@ export default function DashboardLayout({ children }: DashboardLayoutProps) {
     </div>
   );
 }
-
-const pageHeaders: Record<string, { title: string; subtitle: string }> = {
-  '/dashboard': {
-    title: 'Dashboard',
-    subtitle:
-      'Resumen general del procesamiento, clasificación y trazabilidad de transacciones.',
-  },
-  '/upload': {
-    title: 'Carga de archivos',
-    subtitle: 'Procesamiento de CSV mediante reglas R1-R5.',
-  },
-  '/transactions': {
-    title: 'Transacciones procesadas',
-    subtitle: 'Consulta y análisis de los registros procesados por lote.',
-  },
-  '/results': {
-    title: 'Resultados',
-    subtitle: 'Resumen de clasificación por lote procesado.',
-  },
-  '/history': {
-    title: 'Historial',
-    subtitle: 'Consulta y trazabilidad de archivos y lotes procesados.',
-  },
-  '/reports': {
-    title: 'Reportes',
-    subtitle: 'Exportación CSV sobre los datos visibles.',
-  },
-  '/profile': {
-    title: 'Perfil del Administrador',
-    subtitle: 'Información de sesión, usuario y estado del sistema.',
-  },
-};

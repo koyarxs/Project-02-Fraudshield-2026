@@ -1,5 +1,6 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
-import { Prisma } from '@prisma/client';
+import { Prisma, UserRole } from '@prisma/client';
+import type { AuthenticatedUser } from '../auth/authenticated-request.interface';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateTransactionDto } from './dto/create-transaction.dto';
 import { UpdateTransactionDto } from './dto/update-transaction.dto';
@@ -26,7 +27,7 @@ export class TransactionService {
     });
   }
 
-  findAll() {
+  findAll(authUser?: AuthenticatedUser) {
     return this.prisma.transaction.findMany({
       include: {
         batch: true,
@@ -36,6 +37,7 @@ export class TransactionService {
           },
         },
         riskCases: {
+          where: this.getRiskCaseAccess(authUser),
           include: {
             responsibleUser: {
               select: {
@@ -65,7 +67,7 @@ export class TransactionService {
     });
   }
 
-  findByBatchId(batchId: number) {
+  findByBatchId(batchId: number, authUser?: AuthenticatedUser) {
     return this.prisma.transaction.findMany({
       where: {
         batchId,
@@ -81,6 +83,7 @@ export class TransactionService {
           },
         },
         riskCases: {
+          where: this.getRiskCaseAccess(authUser),
           include: {
             responsibleUser: {
               select: {
@@ -110,7 +113,7 @@ export class TransactionService {
     });
   }
 
-  findOne(id: number) {
+  findOne(id: number, authUser?: AuthenticatedUser) {
     return this.prisma.transaction.findUnique({
       where: { id },
       include: {
@@ -121,6 +124,7 @@ export class TransactionService {
           },
         },
         riskCases: {
+          where: this.getRiskCaseAccess(authUser),
           include: {
             responsibleUser: {
               select: {
@@ -252,19 +256,18 @@ export class TransactionService {
       transactionDateTime.getTime() + 10 * 60 * 1000,
     );
 
-    const nearbyTransactions =
-      await this.prisma.transaction.count({
-        where: {
-          customerCode: transaction.customerCode,
-          id: {
-            not: transaction.id,
-          },
-          transactionDate: {
-            gte: shortPeriodStart,
-            lte: shortPeriodEnd,
-          },
+    const nearbyTransactions = await this.prisma.transaction.count({
+      where: {
+        customerCode: transaction.customerCode,
+        id: {
+          not: transaction.id,
         },
-      });
+        transactionDate: {
+          gte: shortPeriodStart,
+          lte: shortPeriodEnd,
+        },
+      },
+    });
 
     // R3: más de 3 transacciones del mismo cliente
     if (nearbyTransactions >= 3) {
@@ -433,7 +436,7 @@ export class TransactionService {
         observedValue: rule.observedValue ?? null,
         threshold: rule.threshold ?? null,
         activated: rule.activated ?? true,
-      })) as Prisma.InputJsonArray,
+      })),
       evaluatedRules: evaluatedRules.map((rule) => ({
         code: rule.code,
         name: rule.name,
@@ -444,7 +447,7 @@ export class TransactionService {
         observedValue: rule.observedValue ?? null,
         threshold: rule.threshold ?? null,
         activated: rule.activated ?? false,
-      })) as Prisma.InputJsonArray,
+      })),
     };
 
     const riskResult = await this.prisma.riskResult.upsert({
@@ -494,5 +497,11 @@ export class TransactionService {
       normalizedHour.length === 5 ? `${normalizedHour}:00` : normalizedHour;
 
     return new Date(`${datePart}T${timePart}.000Z`);
+  }
+
+  private getRiskCaseAccess(authUser?: AuthenticatedUser) {
+    return authUser?.role === UserRole.ANALISTA
+      ? { responsibleUserId: authUser.userId }
+      : undefined;
   }
 }

@@ -81,6 +81,18 @@ table {
   backdrop-filter: blur(12px);
 }
 
+.module-sticky-header {
+  position: sticky;
+  top: 4.75rem;
+  z-index: 20;
+}
+
+@media (min-width: 768px) {
+  .module-sticky-header {
+    top: 5.25rem;
+  }
+}
+
 @keyframes login-form-enter {
   from {
     opacity: 0;
@@ -89,6 +101,60 @@ table {
   to {
     opacity: 1;
     transform: translateY(0);
+  }
+}
+
+@keyframes login-panel-enter {
+  from {
+    opacity: 0.78;
+    transform: scale(1.015);
+    filter: blur(10px);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+    filter: blur(0);
+  }
+}
+
+@keyframes login-reveal-item {
+  from {
+    opacity: 0;
+    transform: translateY(18px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes login-type-line {
+  from {
+    max-width: 0;
+  }
+  to {
+    max-width: 100%;
+  }
+}
+
+@keyframes login-caret {
+  0%,
+  45% {
+    border-color: rgba(103, 232, 249, 0.82);
+  }
+  46%,
+  100% {
+    border-color: transparent;
+  }
+}
+
+@keyframes login-float {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-8px);
   }
 }
 
@@ -101,8 +167,149 @@ table {
   }
 }
 
+@keyframes login-science-drift {
+  from {
+    transform: translate3d(-1rem, -0.5rem, 0);
+  }
+  to {
+    transform: translate3d(1rem, 0.75rem, 0);
+  }
+}
+
+@keyframes login-science-pulse {
+  0%,
+  100% {
+    opacity: 0.24;
+  }
+  50% {
+    opacity: 0.58;
+  }
+}
+
+@keyframes login-risk-card {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-10px);
+  }
+}
+
+@keyframes login-risk-bar {
+  0%,
+  100% {
+    height: var(--risk-low);
+  }
+  50% {
+    height: var(--risk-high);
+  }
+}
+
+@keyframes login-risk-line {
+  0% {
+    stroke-dashoffset: 620;
+    opacity: 0.35;
+  }
+  45%,
+  100% {
+    stroke-dashoffset: 0;
+    opacity: 0.82;
+  }
+}
+
 .login-form-enter {
   animation: login-form-enter 420ms ease-out both;
+}
+
+.login-panel-enter {
+  animation: login-panel-enter 900ms cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+.login-reveal-item {
+  animation: login-reveal-item 720ms cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+.login-reveal-delay-1 {
+  animation-delay: 120ms;
+}
+
+.login-reveal-delay-2 {
+  animation-delay: 220ms;
+}
+
+.login-reveal-delay-3 {
+  animation-delay: 320ms;
+}
+
+.login-reveal-delay-4 {
+  animation-delay: 420ms;
+}
+
+.login-type-line {
+  display: block;
+  width: max-content;
+  max-width: 0;
+  overflow: hidden;
+  border-right: 0.08em solid rgba(103, 232, 249, 0.82);
+  white-space: nowrap;
+  animation:
+    login-type-line 760ms steps(18, end) forwards,
+    login-caret 760ms steps(1, end) forwards;
+}
+
+.login-type-delay-1 {
+  animation-delay: 120ms;
+}
+
+.login-type-delay-2 {
+  animation-delay: 760ms;
+}
+
+.login-type-delay-3 {
+  animation-delay: 1380ms;
+}
+
+.login-type-delay-4 {
+  animation-delay: 1980ms;
+}
+
+.login-risk-card {
+  animation: login-risk-card 5s ease-in-out infinite;
+}
+
+.login-risk-bar {
+  height: var(--risk-low);
+  animation: login-risk-bar 2.2s ease-in-out infinite;
+}
+
+.login-risk-line {
+  stroke-dasharray: 620;
+  stroke-dashoffset: 620;
+  animation: login-risk-line 3.2s ease-in-out infinite;
+}
+
+.login-risk-bar-1 {
+  --risk-low: 5.6rem;
+  --risk-high: 8.8rem;
+}
+
+.login-risk-bar-2 {
+  --risk-low: 7.2rem;
+  --risk-high: 11rem;
+  animation-delay: 260ms;
+}
+
+.login-risk-bar-3 {
+  --risk-low: 4.8rem;
+  --risk-high: 8.3rem;
+  animation-delay: 520ms;
+}
+
+.login-risk-bar-4 {
+  --risk-low: 8.5rem;
+  --risk-high: 12.4rem;
+  animation-delay: 780ms;
 }
 
 .login-orbit {
@@ -115,10 +322,55 @@ table {
   animation-direction: reverse;
 }
 
+.login-mobile-science-bg {
+  pointer-events: none;
+  opacity: 0.9;
+}
+
+.login-mobile-science-bg::before,
+.login-mobile-science-bg::after {
+  content: '';
+  position: absolute;
+  inset: -12%;
+}
+
+.login-mobile-science-bg::before {
+  background:
+    linear-gradient(115deg, transparent 0 42%, rgba(125, 211, 252, 0.18) 42% 42.35%, transparent 42.35% 100%),
+    linear-gradient(25deg, transparent 0 58%, rgba(45, 212, 191, 0.14) 58% 58.35%, transparent 58.35% 100%),
+    radial-gradient(circle at 18% 22%, rgba(103, 232, 249, 0.55) 0 2px, transparent 3px),
+    radial-gradient(circle at 76% 34%, rgba(147, 197, 253, 0.42) 0 2px, transparent 3px),
+    radial-gradient(circle at 62% 74%, rgba(45, 212, 191, 0.45) 0 2px, transparent 3px),
+    radial-gradient(circle at 34% 82%, rgba(191, 219, 254, 0.36) 0 1.5px, transparent 3px);
+  background-size:
+    18rem 18rem,
+    15rem 15rem,
+    7rem 7rem,
+    8rem 8rem,
+    9rem 9rem,
+    6rem 6rem;
+  animation: login-science-drift 10s ease-in-out infinite alternate;
+}
+
+.login-mobile-science-bg::after {
+  background:
+    radial-gradient(circle at 50% 50%, rgba(34, 211, 238, 0.16), transparent 9rem),
+    radial-gradient(circle at 18% 68%, rgba(59, 130, 246, 0.18), transparent 8rem);
+  animation: login-science-pulse 4.8s ease-in-out infinite;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .login-form-enter,
+  .login-panel-enter,
+  .login-reveal-item,
+  .login-type-line,
+  .login-risk-card,
+  .login-risk-bar,
+  .login-risk-line,
   .login-orbit,
-  .login-orbit-slow {
+  .login-orbit-slow,
+  .login-mobile-science-bg::before,
+  .login-mobile-science-bg::after {
     animation: none;
   }
 }

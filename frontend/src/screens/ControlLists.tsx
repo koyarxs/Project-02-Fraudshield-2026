@@ -1,4 +1,10 @@
-import { useEffect, useMemo, useState, type ReactNode } from 'react';
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useState,
+  type ReactNode,
+} from 'react';
 import {
   FiActivity,
   FiCheckCircle,
@@ -8,23 +14,28 @@ import {
   FiRefreshCw,
   FiSearch,
   FiShield,
-  FiTrash2,
-  FiX,
 } from 'react-icons/fi';
 import type { IconType } from 'react-icons';
 import DashboardLayout from '../components/layout/DashboardLayout';
+import {
+  DetailBadge,
+  DetailField,
+  DetailGrid,
+  DetailPanel,
+  DetailSection,
+} from '../components/ui/DetailPanel';
 import auditLogService, { type ApiAuditLog } from '../services/audit-log.service';
 import controlListService, {
   type ApiControlListEntry,
   type ControlListPayload,
 } from '../services/control-list.service';
 import { formatDate, formatNumber } from '../utils/formatDate';
+import { useAuth } from '../hooks/useAuth';
 
 type ListType = 'WATCHLIST' | 'ALLOWLIST';
-type ListFilter = 'TODOS' | ListType;
 type IdentifierType = 'CUSTOMER' | 'TRANSACTION' | 'LOCATION';
 type StatusFilter = 'TODOS' | 'ACTIVA' | 'INACTIVA';
-type SortKey = 'updatedAt' | 'identifier' | 'listType' | 'identifierType';
+type SortKey = 'updatedAt' | 'identifier' | 'identifierType';
 type SortDirection = 'asc' | 'desc';
 
 interface FormState {
@@ -36,7 +47,7 @@ interface FormState {
 }
 
 interface FiltersState {
-  listType: ListFilter;
+  listType: ListType;
   identifierType: 'TODOS' | IdentifierType;
   status: StatusFilter;
   query: string;
@@ -71,6 +82,8 @@ const listLabels: Record<ListType, string> = {
 };
 
 export default function ControlLists() {
+  const { user } = useAuth();
+  const isAdministrator = user?.role === 'ADMINISTRADOR';
   const [entries, setEntries] = useState<ApiControlListEntry[]>([]);
   const [auditLogs, setAuditLogs] = useState<ApiAuditLog[]>([]);
   const [form, setForm] = useState<FormState>(initialForm);
@@ -88,13 +101,15 @@ export default function ControlLists() {
   const [pageSize, setPageSize] = useState(8);
   const [currentPage, setCurrentPage] = useState(1);
 
-  const loadControlLists = async () => {
+  const loadControlLists = useCallback(async () => {
     setIsRefreshing(true);
     setError('');
 
     const [entriesResult, auditResult] = await Promise.allSettled([
       controlListService.findAll(),
-      auditLogService.findAll(),
+      isAdministrator
+        ? auditLogService.findAll()
+        : Promise.resolve([] as ApiAuditLog[]),
     ]);
 
     if (entriesResult.status === 'fulfilled') {
@@ -113,11 +128,11 @@ export default function ControlLists() {
 
     setIsLoading(false);
     setIsRefreshing(false);
-  };
+  }, [isAdministrator]);
 
   useEffect(() => {
     void loadControlLists();
-  }, []);
+  }, [loadControlLists]);
 
   const kpis = useMemo(() => {
     const lastUpdated = entries
@@ -126,12 +141,10 @@ export default function ControlLists() {
 
     return {
       total: entries.length,
-      activeWatchlist: entries.filter(
-        (entry) => entry.listType === 'WATCHLIST' && entry.active,
-      ).length,
-      activeAllowlist: entries.filter(
-        (entry) => entry.listType === 'ALLOWLIST' && entry.active,
-      ).length,
+      watchlist: entries.filter((entry) => entry.listType === 'WATCHLIST')
+        .length,
+      allowlist: entries.filter((entry) => entry.listType === 'ALLOWLIST')
+        .length,
       lastUpdated,
     };
   }, [entries]);
@@ -298,48 +311,31 @@ export default function ControlLists() {
     }
   };
 
-  const removeEntry = async (entry: ApiControlListEntry) => {
-    setError('');
-    setMessage('');
-
-    const confirmed = window.confirm(
-      `Eliminar ${listLabels[entry.listType]} ${entry.identifierType}:${entry.identifier}?`,
-    );
-
-    if (!confirmed) {
-      return;
-    }
-
-    setIsSaving(true);
-
-    try {
-      await controlListService.remove(entry.id);
-      setMessage('Entrada eliminada correctamente.');
-      await loadControlLists();
-    } catch (requestError) {
-      setError(getRequestErrorMessage(requestError));
-    } finally {
-      setIsSaving(false);
-    }
-  };
-
   return (
     <DashboardLayout>
       <div className="space-y-4">
-        <section className="app-card rounded-[24px] p-5 lg:p-6">
+        <section className="module-sticky-header app-card rounded-[24px] p-5 lg:p-6">
           <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
             <div>
               <p className="text-sm font-semibold uppercase tracking-[0.16em] text-blue-700">
                 Listas de control
               </p>
               <h1 className="mt-2 text-3xl font-bold text-slate-950">
-                Watchlist y allowlist para apoyo operacional.
+                Watchlist y Allowlist
               </h1>
-              <p className="mt-2 max-w-3xl text-sm leading-6 text-slate-600">
-                Estas listas registran identificadores relevantes para revision
-                y trazabilidad. Son apoyo operacional y no determinan fraude
-                automaticamente.
-              </p>
+              <div className="mt-3 max-w-4xl space-y-2 text-sm leading-6 text-slate-600">
+                <p>
+                  <strong className="font-semibold text-slate-800">Watchlist:</strong>{' '}
+                  identificadores que requieren atención adicional durante una revisión.
+                </p>
+                <p>
+                  <strong className="font-semibold text-slate-800">Allowlist:</strong>{' '}
+                  identificadores previamente revisados y considerados confiables como antecedente operativo.
+                </p>
+                <p className="font-semibold text-slate-700">
+                  Estas listas apoyan la decisión del analista y no clasifican automáticamente una transacción como fraudulenta o legítima.
+                </p>
+              </div>
             </div>
             <button
               type="button"
@@ -375,23 +371,23 @@ export default function ControlLists() {
           <>
             <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
               <ControlListKpi
-                title="Entradas totales"
+                title="Identificadores registrados"
                 value={kpis.total}
-                description="Registros persistidos en PostgreSQL."
+                description="Total disponible para consulta de apoyo."
                 icon={FiList}
                 tone="blue"
               />
               <ControlListKpi
-                title="Watchlist activas"
-                value={kpis.activeWatchlist}
-                description="Identificadores bajo observacion."
+                title="Registros en Watchlist"
+                value={kpis.watchlist}
+                description="Identificadores para atención adicional."
                 icon={FiShield}
                 tone="red"
               />
               <ControlListKpi
-                title="Allowlist activas"
-                value={kpis.activeAllowlist}
-                description="Identificadores permitidos para apoyo."
+                title="Registros en Allowlist"
+                value={kpis.allowlist}
+                description="Antecedentes operativos confiables."
                 icon={FiCheckCircle}
                 tone="emerald"
               />
@@ -404,22 +400,30 @@ export default function ControlLists() {
               />
             </section>
 
-            <div className="grid gap-4 xl:grid-cols-[420px_minmax(0,1fr)]">
-              <ControlListForm
-                form={form}
-                editingEntryId={editingEntryId}
-                isSaving={isSaving}
-                message={message}
-                error={error}
-                onChange={(patch) =>
-                  setForm((current) => ({
-                    ...current,
-                    ...patch,
-                  }))
-                }
-                onSubmit={handleSubmit}
-                onCancel={cancelEditing}
-              />
+            <div
+              className={
+                isAdministrator
+                  ? 'grid gap-4 xl:grid-cols-[420px_minmax(0,1fr)]'
+                  : 'grid gap-4'
+              }
+            >
+              {isAdministrator ? (
+                <ControlListForm
+                  form={form}
+                  editingEntryId={editingEntryId}
+                  isSaving={isSaving}
+                  message={message}
+                  error={error}
+                  onChange={(patch) =>
+                    setForm((current) => ({
+                      ...current,
+                      ...patch,
+                    }))
+                  }
+                  onSubmit={handleSubmit}
+                  onCancel={cancelEditing}
+                />
+              ) : null}
 
               <section className="app-card rounded-[24px] p-5 lg:p-6">
                 <div className="flex flex-col gap-4">
@@ -464,7 +468,7 @@ export default function ControlLists() {
                       onView={setSelectedEntry}
                       onEdit={startEditing}
                       onToggle={(entry) => void toggleEntry(entry)}
-                      onRemove={(entry) => void removeEntry(entry)}
+                      canManage={isAdministrator}
                     />
                     <Pagination
                       page={safePage}
@@ -482,7 +486,9 @@ export default function ControlLists() {
               </section>
             </div>
 
-            <RecentControlListActivity logs={recentActivity} />
+            {isAdministrator ? (
+              <RecentControlListActivity logs={recentActivity} />
+            ) : null}
           </>
         )}
       </div>
@@ -493,6 +499,7 @@ export default function ControlLists() {
           onClose={() => setSelectedEntry(null)}
           onEdit={() => startEditing(selectedEntry)}
           onToggle={() => void toggleEntry(selectedEntry)}
+          canManage={isAdministrator}
         />
       ) : null}
     </DashboardLayout>
@@ -570,7 +577,7 @@ function ControlListForm({
             rows={4}
             minLength={8}
             required
-            placeholder="Describe por que este identificador debe quedar registrado."
+            placeholder="Explica el antecedente que justifica incorporar este identificador"
             className="mt-2 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:border-blue-500 focus:ring-4 focus:ring-blue-100"
           />
         </label>
@@ -635,18 +642,7 @@ function ControlListFilters({
   onClear: () => void;
 }) {
   return (
-    <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-[repeat(3,minmax(130px,1fr))_minmax(220px,1.4fr)]">
-      <FilterField label="Lista">
-        <select
-          value={filters.listType}
-          onChange={(event) => onChange('listType', event.target.value)}
-          className="h-11 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm outline-none focus:border-blue-500 focus:ring-4 focus:ring-blue-100"
-        >
-          <option value="TODOS">Todas</option>
-          <option value="WATCHLIST">Watchlist</option>
-          <option value="ALLOWLIST">Allowlist</option>
-        </select>
-      </FilterField>
+    <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-[minmax(130px,0.9fr)_minmax(130px,0.9fr)_minmax(260px,1.6fr)]">
       <FilterField label="Tipo">
         <select
           value={filters.identifierType}
@@ -666,8 +662,8 @@ function ControlListFilters({
           className="h-11 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm outline-none focus:border-blue-500 focus:ring-4 focus:ring-blue-100"
         >
           <option value="TODOS">Todos</option>
-          <option value="ACTIVA">Activa</option>
-          <option value="INACTIVA">Inactiva</option>
+          <option value="ACTIVA">Activo</option>
+          <option value="INACTIVA">Inactivo</option>
         </select>
       </FilterField>
       <FilterField label="Busqueda">
@@ -677,7 +673,7 @@ function ControlListFilters({
             <input
               value={filters.query}
               onChange={(event) => onChange('query', event.target.value)}
-              placeholder="Identificador o motivo"
+              placeholder="Buscar identificador o motivo"
               className="h-11 w-full rounded-xl border border-slate-200 bg-white pl-10 pr-3 text-sm outline-none focus:border-blue-500 focus:ring-4 focus:ring-blue-100"
             />
           </span>
@@ -702,7 +698,7 @@ function ControlListTable({
   onView,
   onEdit,
   onToggle,
-  onRemove,
+  canManage,
 }: {
   entries: ApiControlListEntry[];
   sortKey: SortKey;
@@ -711,24 +707,23 @@ function ControlListTable({
   onView: (entry: ApiControlListEntry) => void;
   onEdit: (entry: ApiControlListEntry) => void;
   onToggle: (entry: ApiControlListEntry) => void;
-  onRemove: (entry: ApiControlListEntry) => void;
+  canManage: boolean;
 }) {
   return (
-    <div className="mt-5 overflow-x-auto rounded-2xl border border-slate-200">
-      <table className="min-w-[980px] divide-y divide-slate-200 bg-white">
+    <div className="mt-5 overflow-hidden rounded-2xl border border-slate-200">
+      <table className="hidden w-full table-fixed divide-y divide-slate-200 bg-white lg:table">
         <thead className="bg-slate-50">
           <tr>
-            <SortableHeader label="Lista" id="listType" sortKey={sortKey} direction={sortDirection} onSort={onSort} />
-            <SortableHeader label="Tipo" id="identifierType" sortKey={sortKey} direction={sortDirection} onSort={onSort} />
-            <SortableHeader label="Identificador" id="identifier" sortKey={sortKey} direction={sortDirection} onSort={onSort} />
-            <th className="whitespace-nowrap px-3 py-2.5 text-left text-xs font-bold uppercase tracking-[0.12em] text-slate-500">
+            <SortableHeader className="w-[12%]" label="Tipo" id="identifierType" sortKey={sortKey} direction={sortDirection} onSort={onSort} />
+            <SortableHeader className="w-[18%]" label="Identificador" id="identifier" sortKey={sortKey} direction={sortDirection} onSort={onSort} />
+            <th className="w-[28%] px-3 py-2.5 text-left text-xs font-bold uppercase tracking-[0.12em] text-slate-500">
               Motivo
             </th>
-            <th className="whitespace-nowrap px-3 py-2.5 text-left text-xs font-bold uppercase tracking-[0.12em] text-slate-500">
+            <th className="w-[12%] px-3 py-2.5 text-left text-xs font-bold uppercase tracking-[0.12em] text-slate-500">
               Estado
             </th>
-            <SortableHeader label="Fecha" id="updatedAt" sortKey={sortKey} direction={sortDirection} onSort={onSort} />
-            <th className="whitespace-nowrap px-3 py-2.5 text-left text-xs font-bold uppercase tracking-[0.12em] text-slate-500">
+            <SortableHeader className="w-[16%]" label="Fecha de actualización" id="updatedAt" sortKey={sortKey} direction={sortDirection} onSort={onSort} />
+            <th className="w-[14%] px-3 py-2.5 text-left text-xs font-bold uppercase tracking-[0.12em] text-slate-500">
               Acciones
             </th>
           </tr>
@@ -736,45 +731,81 @@ function ControlListTable({
         <tbody className="divide-y divide-slate-100">
           {entries.map((entry) => (
             <tr key={entry.id} className="align-top hover:bg-blue-50/40">
-              <td className="whitespace-nowrap px-3 py-2.5">
-                <ListBadge listType={entry.listType} />
-              </td>
-              <td className="whitespace-nowrap px-3 py-2.5 text-sm text-slate-700">
+              <td className="px-3 py-2.5 text-sm text-slate-700">
                 {identifierLabels[entry.identifierType]}
               </td>
-              <td className="whitespace-nowrap px-3 py-2.5 text-sm font-semibold text-slate-950">
+              <td className="truncate px-3 py-2.5 text-sm font-semibold text-slate-950">
                 {entry.identifier}
               </td>
-              <td className="min-w-72 px-3 py-2.5 text-sm leading-5 text-slate-700">
-                {entry.reason ?? 'No disponible'}
+              <td className="px-3 py-2.5 text-sm leading-5 text-slate-700">
+                <span className="line-clamp-2 break-words">
+                  {entry.reason ?? 'No disponible'}
+                </span>
               </td>
-              <td className="whitespace-nowrap px-3 py-2.5">
+              <td className="px-3 py-2.5">
                 <StatusBadge active={entry.active} />
               </td>
-              <td className="whitespace-nowrap px-3 py-2.5 text-sm text-slate-700">
+              <td className="px-3 py-2.5 text-sm text-slate-700">
                 {formatDate(entry.updatedAt)}
               </td>
-              <td className="whitespace-nowrap px-3 py-2.5">
-                <div className="flex flex-nowrap gap-1.5">
+              <td className="px-3 py-2.5">
+                <div className="flex flex-wrap gap-1.5">
                   <ActionButton icon={FiEye} label="Ver" onClick={() => onView(entry)} />
-                  <ActionButton icon={FiEdit3} label="Editar" onClick={() => onEdit(entry)} />
-                  <ActionButton
-                    icon={FiRefreshCw}
-                    label={entry.active ? 'Desactivar' : 'Activar'}
-                    onClick={() => onToggle(entry)}
-                  />
-                  <ActionButton
-                    icon={FiTrash2}
-                    label="Eliminar"
-                    tone="danger"
-                    onClick={() => onRemove(entry)}
-                  />
+                  {canManage ? (
+                    <>
+                      <ActionButton icon={FiEdit3} label="Editar" onClick={() => onEdit(entry)} />
+                      <ActionButton
+                        icon={FiRefreshCw}
+                        label={entry.active ? 'Desactivar' : 'Activar'}
+                        onClick={() => onToggle(entry)}
+                      />
+                    </>
+                  ) : null}
                 </div>
               </td>
             </tr>
           ))}
         </tbody>
       </table>
+
+      <div className="divide-y divide-slate-100 bg-white lg:hidden">
+        {entries.map((entry) => (
+          <article key={entry.id} className="p-4">
+            <div className="flex items-start justify-between gap-3">
+              <div className="min-w-0">
+                <p className="text-xs font-bold uppercase tracking-[0.12em] text-slate-500">
+                  {identifierLabels[entry.identifierType]}
+                </p>
+                <p className="mt-1 truncate text-sm font-bold text-slate-950">
+                  {entry.identifier}
+                </p>
+              </div>
+              <StatusBadge active={entry.active} />
+            </div>
+            <p className="mt-3 text-sm leading-6 text-slate-700">
+              {entry.reason ?? 'No disponible'}
+            </p>
+            <div className="mt-3 flex flex-wrap items-center justify-between gap-3">
+              <p className="text-sm text-slate-500">
+                {formatDate(entry.updatedAt)}
+              </p>
+              <div className="flex flex-wrap gap-1.5">
+                <ActionButton icon={FiEye} label="Ver" onClick={() => onView(entry)} />
+                {canManage ? (
+                  <>
+                    <ActionButton icon={FiEdit3} label="Editar" onClick={() => onEdit(entry)} />
+                    <ActionButton
+                      icon={FiRefreshCw}
+                      label={entry.active ? 'Desactivar' : 'Activar'}
+                      onClick={() => onToggle(entry)}
+                    />
+                  </>
+                ) : null}
+              </div>
+            </div>
+          </article>
+        ))}
+      </div>
     </div>
   );
 }
@@ -819,85 +850,83 @@ function EntryDetailDrawer({
   onClose,
   onEdit,
   onToggle,
+  canManage,
 }: {
   entry: ApiControlListEntry;
   onClose: () => void;
   onEdit: () => void;
   onToggle: () => void;
+  canManage: boolean;
 }) {
   return (
-    <div
-      className="fixed inset-0 z-50 bg-slate-950/35 p-4 backdrop-blur-sm"
-      role="dialog"
-      aria-modal="true"
-      aria-labelledby="control-list-detail-title"
-    >
-      <div className="ml-auto flex h-full w-full max-w-xl flex-col overflow-hidden rounded-[28px] bg-white shadow-2xl shadow-slate-950/20">
-        <div className="flex items-start justify-between gap-4 border-b border-slate-200 p-5">
-          <div>
-            <p className="text-xs font-bold uppercase tracking-[0.18em] text-blue-700">
-              Detalle de entrada
-            </p>
-            <h2
-              id="control-list-detail-title"
-              className="mt-2 text-2xl font-bold text-slate-950"
-            >
-              {entry.identifier}
-            </h2>
-          </div>
-          <button
-            type="button"
-            onClick={onClose}
-            className="flex h-10 w-10 items-center justify-center rounded-2xl border border-slate-200 bg-white text-slate-600 hover:border-blue-200 hover:bg-blue-50 hover:text-blue-700"
-            aria-label="Cerrar detalle"
-          >
-            <FiX className="h-5 w-5" aria-hidden="true" />
-          </button>
-        </div>
-
-        <div className="flex-1 overflow-y-auto p-5">
-          <dl className="divide-y divide-slate-200 border-y border-slate-200">
-            <DetailRow label="Lista" value={listLabels[entry.listType]} />
-            <DetailRow
-              label="Tipo"
-              value={identifierLabels[entry.identifierType]}
-            />
-            <DetailRow label="Identificador" value={entry.identifier} />
-            <DetailRow label="Estado" value={entry.active ? 'Activa' : 'Inactiva'} />
-            <DetailRow label="Creada" value={formatDate(entry.createdAt)} />
-            <DetailRow label="Actualizada" value={formatDate(entry.updatedAt)} />
-            <DetailRow
-              label="Creada por"
-              value={entry.createdBy?.name ?? entry.createdBy?.email ?? 'Sistema'}
-            />
-          </dl>
-
-          <section className="mt-5 rounded-2xl border border-slate-200 bg-slate-50 p-4">
-            <h3 className="text-sm font-bold text-slate-950">Motivo</h3>
-            <p className="mt-2 text-sm leading-6 text-slate-700">
-              {entry.reason ?? 'No disponible'}
-            </p>
-          </section>
-        </div>
-
-        <div className="flex flex-wrap gap-3 border-t border-slate-200 p-5">
+    <DetailPanel
+      icon={<FiList className="h-5 w-5" aria-hidden="true" />}
+      eyebrow="Registro de lista de control"
+      title={entry.identifier}
+      badge={
+        <DetailBadge tone={entry.active ? 'emerald' : 'slate'}>
+          {entry.active ? 'Activo' : 'Inactivo'}
+        </DetailBadge>
+      }
+      meta={`${listLabels[entry.listType]} · ${formatDate(entry.updatedAt)}`}
+      onClose={onClose}
+      footer={canManage ? (
+        <>
           <button
             type="button"
             onClick={onEdit}
-            className="rounded-2xl bg-blue-700 px-4 py-2.5 text-sm font-semibold text-white shadow-lg shadow-blue-700/20 hover:bg-blue-800"
+            className="rounded-xl bg-blue-700 px-4 py-2.5 text-sm font-semibold text-white hover:bg-blue-800"
           >
             Editar
           </button>
           <button
             type="button"
             onClick={onToggle}
-            className="rounded-2xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 hover:border-blue-200 hover:bg-blue-50 hover:text-blue-700"
+            className="rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 hover:bg-blue-50"
           >
             {entry.active ? 'Desactivar' : 'Activar'}
           </button>
-        </div>
-      </div>
-    </div>
+        </>
+      ) : undefined}
+    >
+      <DetailSection
+        title="Resumen"
+        tone={entry.listType === 'WATCHLIST' ? 'red' : 'emerald'}
+      >
+        <DetailGrid>
+          <DetailField label="Lista" value={listLabels[entry.listType]} />
+          <DetailField label="Estado" value={entry.active ? 'Activo' : 'Inactivo'} />
+        </DetailGrid>
+      </DetailSection>
+
+      <DetailSection title="Identificación">
+        <DetailGrid>
+          <DetailField
+            label="Tipo de identificador"
+            value={identifierLabels[entry.identifierType]}
+          />
+          <DetailField label="Identificador" value={entry.identifier} />
+        </DetailGrid>
+      </DetailSection>
+
+      <DetailSection title="Información operacional">
+        <p className="break-words text-sm leading-6 text-slate-700">
+          {entry.reason ?? 'No disponible'}
+        </p>
+      </DetailSection>
+
+      <DetailSection title="Detalle completo o trazabilidad">
+        <DetailGrid>
+          <DetailField label="Creada" value={formatDate(entry.createdAt)} />
+          <DetailField label="Actualizada" value={formatDate(entry.updatedAt)} />
+          <DetailField
+            label="Creada por"
+            value={entry.createdBy?.name ?? entry.createdBy?.email ?? 'Sistema'}
+            wide
+          />
+        </DetailGrid>
+      </DetailSection>
+    </DetailPanel>
   );
 }
 
@@ -1032,17 +1061,19 @@ function SortableHeader({
   sortKey,
   direction,
   onSort,
+  className = '',
 }: {
   label: string;
   id: SortKey;
   sortKey: SortKey;
   direction: SortDirection;
   onSort: (key: SortKey) => void;
+  className?: string;
 }) {
   const active = id === sortKey;
 
   return (
-    <th className="whitespace-nowrap px-3 py-2.5 text-left text-xs font-bold uppercase tracking-[0.12em] text-slate-500">
+    <th className={`px-3 py-2.5 text-left text-xs font-bold uppercase tracking-[0.12em] text-slate-500 ${className}`}>
       <button
         type="button"
         onClick={() => onSort(id)}
@@ -1058,41 +1089,21 @@ function SortableHeader({
 function ActionButton({
   icon: Icon,
   label,
-  tone = 'default',
   onClick,
 }: {
   icon: IconType;
   label: string;
-  tone?: 'default' | 'danger';
   onClick: () => void;
 }) {
-  const classes =
-    tone === 'danger'
-      ? 'border-red-200 bg-white text-red-700 hover:bg-red-50'
-      : 'border-slate-200 bg-white text-slate-700 hover:border-blue-200 hover:bg-blue-50 hover:text-blue-700';
-
   return (
     <button
       type="button"
       onClick={onClick}
-      className={`inline-flex items-center gap-1 rounded-xl border px-2.5 py-1.5 text-xs font-bold ${classes}`}
+      className="inline-flex items-center gap-1 rounded-xl border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-bold text-slate-700 hover:border-blue-200 hover:bg-blue-50 hover:text-blue-700"
     >
       <Icon className="h-3.5 w-3.5" aria-hidden="true" />
       {label}
     </button>
-  );
-}
-
-function ListBadge({ listType }: { listType: ListType }) {
-  const classes =
-    listType === 'WATCHLIST'
-      ? 'border-red-200 bg-red-50 text-red-700'
-      : 'border-emerald-200 bg-emerald-50 text-emerald-700';
-
-  return (
-    <span className={`inline-flex rounded-full border px-2.5 py-1 text-xs font-bold ${classes}`}>
-      {listLabels[listType]}
-    </span>
   );
 }
 
@@ -1105,7 +1116,7 @@ function StatusBadge({ active }: { active: boolean }) {
           : 'border-slate-200 bg-slate-50 text-slate-700'
       }`}
     >
-      {active ? 'Activa' : 'Inactiva'}
+      {active ? 'Activo' : 'Inactivo'}
     </span>
   );
 }
@@ -1163,17 +1174,6 @@ function Pagination({
   );
 }
 
-function DetailRow({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="grid gap-1 py-3 sm:grid-cols-[150px_minmax(0,1fr)]">
-      <dt className="text-sm text-slate-500">{label}</dt>
-      <dd className="break-words text-sm font-semibold text-slate-950">
-        {value}
-      </dd>
-    </div>
-  );
-}
-
 function EmptyState({ text }: { text: string }) {
   return (
     <div className="mt-5 rounded-2xl border border-dashed border-slate-300 bg-slate-50 px-5 py-10 text-center text-sm font-medium text-slate-500">
@@ -1215,7 +1215,7 @@ function filterEntries(entries: ApiControlListEntry[], filters: FiltersState) {
       .toLowerCase();
 
     return (
-      (filters.listType === 'TODOS' || entry.listType === filters.listType) &&
+      entry.listType === filters.listType &&
       (filters.identifierType === 'TODOS' ||
         entry.identifierType === filters.identifierType) &&
       (filters.status === 'TODOS' ||

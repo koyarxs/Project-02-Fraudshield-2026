@@ -13,18 +13,23 @@ import {
 import {
   FiBarChart2,
   FiBriefcase,
-  FiCheckCircle,
   FiDownload,
   FiEye,
   FiFileText,
   FiFilter,
-  FiRefreshCw,
   FiSearch,
   FiShield,
   FiUploadCloud,
-  FiX,
 } from 'react-icons/fi';
 import DashboardLayout from '../components/layout/DashboardLayout';
+import {
+  DetailBadge,
+  DetailField,
+  DetailGrid,
+  DetailNote,
+  DetailPanel,
+  DetailSection,
+} from '../components/ui/DetailPanel';
 import { historyService } from '../services/history.service';
 import transactionService from '../services/transaction.service';
 import type { HistoryRecord } from '../types/history';
@@ -36,9 +41,11 @@ import {
   formatDate,
   formatNumber,
 } from '../utils/formatDate';
+import { useAuth } from '../hooks/useAuth';
 
 type RiskFilter = RiskLevel | 'Todos';
 type SortMode = 'score-desc' | 'score-asc' | 'amount-desc' | 'amount-asc';
+type BatchStatus = 'completed' | 'failed' | 'pending' | 'unknown';
 
 interface FiltersState {
   query: string;
@@ -59,6 +66,7 @@ interface Metrics {
 }
 
 const PAGE_SIZE = 10;
+const INITIAL_BATCH_LIMIT = 6;
 
 const initialFilters: FiltersState = {
   query: '',
@@ -89,9 +97,13 @@ const actionByRisk: Record<RiskLevel, string> = {
 };
 
 export default function Transactions() {
+  const { user } = useAuth();
+  const canCreateCases = user?.role === 'ADMINISTRADOR';
   const navigate = useNavigate();
   const [batches, setBatches] = useState<HistoryRecord[]>([]);
   const [selectedBatchId, setSelectedBatchId] = useState<number | null>(null);
+  const [batchQuery, setBatchQuery] = useState('');
+  const [showAllBatches, setShowAllBatches] = useState(false);
   const [transactions, setTransactions] = useState<ApiTransaction[]>([]);
   const [selectedTransaction, setSelectedTransaction] =
     useState<ApiTransaction | null>(null);
@@ -114,7 +126,7 @@ export default function Transactions() {
       try {
         const response = await historyService.findAll();
         const apiBatches = response.filter(
-          (batch) => batch.source === 'api' && hasTransactions(batch),
+          (batch) => batch.source === 'api',
         );
 
         if (!shouldIgnore) {
@@ -122,7 +134,8 @@ export default function Transactions() {
           setSelectedBatchId((current) =>
             current && apiBatches.some((batch) => batch.batchId === current)
               ? current
-              : apiBatches[0]?.batchId ?? null,
+              : (apiBatches.find(canShowBatchResults) ?? apiBatches[0])
+                  ?.batchId ?? null,
           );
         }
       } catch {
@@ -158,6 +171,13 @@ export default function Transactions() {
       return;
     }
 
+    if (selectedBatch && !canShowBatchResults(selectedBatch)) {
+      setDetailError(
+        'Este lote no está completado o no posee transacciones disponibles para consultar.',
+      );
+      return;
+    }
+
     const batchId = selectedBatchId;
 
     async function loadTransactions() {
@@ -188,7 +208,7 @@ export default function Transactions() {
     return () => {
       shouldIgnore = true;
     };
-  }, [selectedBatchId]);
+  }, [selectedBatch, selectedBatchId]);
 
   useEffect(() => {
     setPage(1);
@@ -224,6 +244,12 @@ export default function Transactions() {
     (currentPage - 1) * PAGE_SIZE,
     currentPage * PAGE_SIZE,
   );
+  const selectedBatchCanShowResults = Boolean(
+    selectedBatch && canShowBatchResults(selectedBatch),
+  );
+  const canExportSelectedBatch = Boolean(
+    selectedBatchCanShowResults && transactions.length > 0,
+  );
 
   const handleSelectBatch = (batchId: number) => {
     setSelectedBatchId(batchId);
@@ -236,6 +262,13 @@ export default function Transactions() {
 
   const handleExport = () => {
     setExportMessage('');
+
+    if (!selectedBatch || !canShowBatchResults(selectedBatch)) {
+      setExportMessage(
+        'Selecciona un lote completado para exportar sus transacciones.',
+      );
+      return;
+    }
 
     const exported = exportRowsToCsv(
       filteredTransactions.map((transaction) =>
@@ -264,15 +297,32 @@ export default function Transactions() {
           <HeroCard
             exportMessage={exportMessage}
             onExport={handleExport}
+            canExport={canExportSelectedBatch}
           />
 
           <BatchSelector
             batches={batches}
             selectedBatchId={selectedBatch?.batchId}
+            query={batchQuery}
+            showAll={showAllBatches}
+            onQueryChange={setBatchQuery}
             onSelect={handleSelectBatch}
+            onShowAll={() => setShowAllBatches(true)}
           />
 
-          {selectedBatch && (
+          {selectedBatch && !selectedBatchCanShowResults && (
+            <section className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_360px]">
+              <BatchSummary batch={selectedBatch} />
+              <div className="app-card flex items-center rounded-[24px] p-5">
+                <Message tone="warning">
+                  {getBatchStatusLabel(selectedBatch.status)}: este lote no
+                  tiene resultados disponibles para consultar.
+                </Message>
+              </div>
+            </section>
+          )}
+
+          {selectedBatch && selectedBatchCanShowResults && (
             <>
               <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-5">
                 <SummaryCard label="Total de transacciones" value={metrics.total} />
@@ -353,6 +403,7 @@ export default function Transactions() {
                           `/case-management?transactionId=${transaction.id}`,
                         )
                       }
+                      canCreateCases={canCreateCases}
                     />
                     <MobileTransactionCards
                       transactions={visibleTransactions}
@@ -362,6 +413,7 @@ export default function Transactions() {
                           `/case-management?transactionId=${transaction.id}`,
                         )
                       }
+                      canCreateCases={canCreateCases}
                     />
                     <PaginationControls
                       page={currentPage}
@@ -384,6 +436,7 @@ export default function Transactions() {
         onManageCase={(transaction) =>
           navigate(`/case-management?transactionId=${transaction.id}`)
         }
+        canCreateCases={canCreateCases}
       />
     </DashboardLayout>
   );
@@ -392,33 +445,36 @@ export default function Transactions() {
 function HeroCard({
   exportMessage,
   onExport,
+  canExport,
 }: {
   exportMessage: string;
   onExport: () => void;
+  canExport: boolean;
 }) {
   return (
-    <section className="app-card rounded-[24px] p-5 lg:p-6">
+    <section className="module-sticky-header app-card rounded-[24px] p-5 lg:p-6">
       <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
         <div>
           <p className="text-sm font-semibold uppercase tracking-[0.16em] text-blue-700">
-            Transacciones procesadas
+            Transacciones
           </p>
           <h1 className="mt-2 text-3xl font-bold text-slate-950">
-            Consulta y análisis de registros individuales.
+            Transacciones procesadas
           </h1>
           <p className="mt-2 max-w-3xl text-sm leading-6 text-slate-600">
-            Selecciona un lote real para revisar transacciones, score,
-            clasificación, reglas activadas y el plan de acción operacional.
+            Selecciona un lote para revisar sus transacciones, clasificación,
+            score, reglas activadas y casos asociados.
           </p>
         </div>
 
         <button
           type="button"
           onClick={onExport}
-          className="inline-flex items-center justify-center gap-2 rounded-2xl bg-slate-950 px-5 py-3 text-sm font-semibold text-white shadow-lg shadow-slate-900/15 transition hover:-translate-y-0.5 hover:bg-slate-800"
+          disabled={!canExport}
+          className="inline-flex items-center justify-center gap-2 rounded-2xl bg-slate-950 px-5 py-3 text-sm font-semibold text-white shadow-lg shadow-slate-900/15 transition hover:-translate-y-0.5 hover:bg-slate-800 disabled:cursor-not-allowed disabled:translate-y-0 disabled:bg-slate-400 disabled:shadow-none"
         >
           <FiDownload className="h-4 w-4" aria-hidden="true" />
-          Exportar CSV
+          Exportar lote seleccionado
         </button>
       </div>
 
@@ -434,12 +490,37 @@ function HeroCard({
 function BatchSelector({
   batches,
   selectedBatchId,
+  query,
+  showAll,
+  onQueryChange,
   onSelect,
+  onShowAll,
 }: {
   batches: HistoryRecord[];
   selectedBatchId?: number;
+  query: string;
+  showAll: boolean;
+  onQueryChange: (query: string) => void;
   onSelect: (batchId: number) => void;
+  onShowAll: () => void;
 }) {
+  const normalizedQuery = query.trim().toLowerCase();
+  const filteredBatches = batches.filter((batch) =>
+    [
+      batch.batchId,
+      batch.fileName,
+      getBatchStatusLabel(batch.status),
+      formatDate(batch.uploadedAt),
+    ]
+      .join(' ')
+      .toLowerCase()
+      .includes(normalizedQuery),
+  );
+  const visibleBatches = showAll
+    ? filteredBatches
+    : filteredBatches.slice(0, INITIAL_BATCH_LIMIT);
+  const hasHiddenBatches = filteredBatches.length > visibleBatches.length;
+
   return (
     <section className="app-card rounded-[24px] p-5 lg:p-6">
       <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
@@ -456,9 +537,23 @@ function BatchSelector({
         </span>
       </div>
 
-      <div className="mt-5 grid gap-4 lg:grid-cols-2 2xl:grid-cols-3">
-        {batches.map((batch) => {
+      <label className="relative mt-5 block">
+        <FiSearch
+          className="pointer-events-none absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400"
+          aria-hidden="true"
+        />
+        <input
+          value={query}
+          onChange={(event) => onQueryChange(event.target.value)}
+          placeholder="Buscar lote, archivo o estado"
+          className="h-11 w-full rounded-2xl border border-slate-300 bg-white pl-11 pr-4 text-sm outline-none focus:border-blue-500 focus:ring-4 focus:ring-blue-100"
+        />
+      </label>
+
+      <div className="mt-4 space-y-2">
+        {visibleBatches.map((batch) => {
           const isSelected = batch.batchId === selectedBatchId;
+          const status = getBatchStatus(batch.status);
 
           return (
             <button
@@ -466,60 +561,67 @@ function BatchSelector({
               type="button"
               onClick={() => onSelect(batch.batchId)}
               className={[
-                'rounded-[24px] border p-5 text-left transition focus:outline-none focus-visible:ring-4 focus-visible:ring-blue-100',
+                'flex w-full flex-col gap-3 rounded-2xl border px-4 py-3 text-left transition focus:outline-none focus-visible:ring-4 focus-visible:ring-blue-100 lg:flex-row lg:items-center lg:justify-between',
                 isSelected
                   ? 'border-blue-500 bg-blue-50 shadow-xl shadow-blue-100'
-                  : 'border-slate-200 bg-white hover:-translate-y-0.5 hover:border-blue-200 hover:shadow-lg hover:shadow-slate-200/70',
+                  : status === 'failed'
+                    ? 'border-red-200 bg-red-50/70 hover:border-red-300'
+                    : status === 'pending'
+                      ? 'border-amber-200 bg-amber-50/70 hover:border-amber-300'
+                      : 'border-slate-200 bg-white hover:-translate-y-0.5 hover:border-blue-200 hover:shadow-lg hover:shadow-slate-200/70',
               ].join(' ')}
             >
-              <div className="flex items-start justify-between gap-3">
-                <div>
-                  <p className="text-xs font-bold uppercase tracking-[0.14em] text-blue-700">
-                    Lote #{batch.batchId}
-                  </p>
-                  <h3 className="mt-2 break-all text-base font-bold text-slate-950">
-                    {batch.fileName}
-                  </h3>
-                </div>
-                <span className="rounded-full bg-white px-3 py-1 text-xs font-bold text-slate-700 ring-1 ring-slate-200">
-                  {batch.status ?? 'N/D'}
-                </span>
+              <div className="min-w-0">
+                <p className="text-xs font-bold uppercase tracking-[0.14em] text-blue-700">
+                  Lote #{batch.batchId}
+                </p>
+                <h3 className="mt-1 truncate text-sm font-bold text-slate-950">
+                  {batch.fileName}
+                </h3>
               </div>
-
-              <dl className="mt-4 grid gap-3 text-sm sm:grid-cols-2">
-                <Fact label="Fecha" value={formatDate(batch.uploadedAt)} />
-                <Fact
-                  label="Total"
-                  value={formatNumber(batch.totalRecords ?? 0)}
-                />
-                <Fact label="Estado" value={batch.status ?? 'No disponible'} />
-                <Fact
-                  label="Archivo"
-                  value={batch.fileName}
-                />
-              </dl>
+              <div className="grid gap-2 text-sm text-slate-600 sm:grid-cols-3 lg:min-w-[520px]">
+                <span>{formatDate(batch.uploadedAt)}</span>
+                <span>{formatNumber(batch.totalRecords ?? 0)} registros</span>
+                <BatchStatusBadge status={batch.status} />
+              </div>
             </button>
           );
         })}
       </div>
+
+      {filteredBatches.length === 0 && (
+        <div className="mt-4 rounded-2xl border border-dashed border-slate-300 bg-slate-50 px-5 py-8 text-center text-sm font-medium text-slate-500">
+          No hay lotes que coincidan con la búsqueda.
+        </div>
+      )}
+
+      {hasHiddenBatches && (
+        <button
+          type="button"
+          onClick={onShowAll}
+          className="mt-4 rounded-2xl border border-slate-300 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 transition hover:-translate-y-0.5 hover:bg-slate-50"
+        >
+          Ver todos los lotes
+        </button>
+      )}
     </section>
   );
 }
 
 function BatchSummary({ batch }: { batch: HistoryRecord }) {
   return (
-    <section className="app-card rounded-[24px] p-5 lg:p-6">
+    <section className="app-card rounded-[24px] p-4 lg:p-5">
       <p className="text-xs font-bold uppercase tracking-[0.16em] text-blue-700">
         Resumen visual del lote
       </p>
-      <h2 className="mt-2 break-all text-2xl font-bold text-slate-950">
+      <h2 className="mt-1 break-all text-xl font-bold text-slate-950">
         Lote #{batch.batchId} · {batch.fileName}
       </h2>
-      <div className="mt-5 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-        <Fact label="ID" value={`#${batch.batchId}`} />
+      <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+        <Fact label="Registros" value={formatNumber(batch.totalRecords ?? 0)} />
         <Fact label="Archivo" value={batch.fileName} />
         <Fact label="Fecha" value={formatDate(batch.uploadedAt)} />
-        <Fact label="Estado" value={batch.status ?? 'No disponible'} />
+        <Fact label="Estado" value={<BatchStatusBadge status={batch.status} />} />
       </div>
     </section>
   );
@@ -533,7 +635,7 @@ function VisualSummary({
   rules: Array<{ code: string; name: string; count: number }>;
 }) {
   return (
-    <section className="app-card rounded-[24px] p-5 lg:p-6">
+    <section className="app-card rounded-[24px] p-4 lg:p-5">
       <div className="flex items-center justify-between gap-3">
         <div>
           <p className="text-xs font-bold uppercase tracking-[0.16em] text-blue-700">
@@ -547,7 +649,7 @@ function VisualSummary({
           <FiBarChart2 className="h-5 w-5" aria-hidden="true" />
         </span>
       </div>
-      <div className="mt-4 h-52">
+      <div className="mt-4 h-40">
         <ResponsiveContainer width="100%" height="100%">
           <BarChart data={distribution} margin={{ top: 12, right: 6, left: -24, bottom: 0 }}>
             <CartesianGrid strokeDasharray="3 3" vertical={false} />
@@ -571,15 +673,15 @@ function VisualSummary({
           </BarChart>
         </ResponsiveContainer>
       </div>
-      <div className="mt-4 border-t border-slate-200 pt-4">
+      <div className="mt-3 border-t border-slate-200 pt-3">
         <h3 className="text-sm font-bold text-slate-950">
           Reglas más activadas del lote
         </h3>
-        <div className="mt-3 space-y-2">
+        <div className="mt-2 space-y-2">
           {rules.map((rule) => (
             <div
               key={rule.code}
-              className="flex items-center justify-between rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm"
+              className="flex items-center justify-between rounded-2xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm"
             >
               <span className="font-semibold text-slate-800">
                 {rule.code} · {rule.name}
@@ -610,7 +712,7 @@ function FiltersPanel({
 }) {
   return (
     <div className="w-full xl:max-w-5xl">
-      <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+      <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-[minmax(280px,1fr)_180px_180px_150px]">
         <label className="relative block md:col-span-2">
           <FiSearch
             className="pointer-events-none absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400"
@@ -621,7 +723,7 @@ function FiltersPanel({
             onChange={(event) =>
               onFiltersChange({ ...filters, query: event.target.value })
             }
-            placeholder="Buscar ID, código o cliente"
+            placeholder="Buscar código, cliente o reglas"
             className="h-11 w-full rounded-2xl border border-slate-300 bg-white pl-11 pr-4 text-sm outline-none focus:border-blue-500 focus:ring-4 focus:ring-blue-100"
           />
         </label>
@@ -653,51 +755,6 @@ function FiltersPanel({
           <option value="amount-asc">Monto menor</option>
         </select>
 
-        <input
-          value={filters.scoreMin}
-          onChange={(event) =>
-            onFiltersChange({ ...filters, scoreMin: event.target.value })
-          }
-          inputMode="numeric"
-          placeholder="Score mínimo"
-          className="h-11 rounded-2xl border border-slate-300 bg-white px-4 text-sm outline-none focus:border-blue-500 focus:ring-4 focus:ring-blue-100"
-        />
-        <input
-          value={filters.scoreMax}
-          onChange={(event) =>
-            onFiltersChange({ ...filters, scoreMax: event.target.value })
-          }
-          inputMode="numeric"
-          placeholder="Score máximo"
-          className="h-11 rounded-2xl border border-slate-300 bg-white px-4 text-sm outline-none focus:border-blue-500 focus:ring-4 focus:ring-blue-100"
-        />
-        <input
-          value={filters.origin}
-          onChange={(event) =>
-            onFiltersChange({ ...filters, origin: event.target.value })
-          }
-          placeholder="Origen"
-          className="h-11 rounded-2xl border border-slate-300 bg-white px-4 text-sm outline-none focus:border-blue-500 focus:ring-4 focus:ring-blue-100"
-        />
-        <input
-          value={filters.destination}
-          onChange={(event) =>
-            onFiltersChange({
-              ...filters,
-              destination: event.target.value,
-            })
-          }
-          placeholder="Destino"
-          className="h-11 rounded-2xl border border-slate-300 bg-white px-4 text-sm outline-none focus:border-blue-500 focus:ring-4 focus:ring-blue-100"
-        />
-        <input
-          type="date"
-          value={filters.date}
-          onChange={(event) =>
-            onFiltersChange({ ...filters, date: event.target.value })
-          }
-          className="h-11 rounded-2xl border border-slate-300 bg-white px-4 text-sm font-semibold outline-none focus:border-blue-500 focus:ring-4 focus:ring-blue-100"
-        />
         <button
           type="button"
           onClick={onClear}
@@ -707,6 +764,59 @@ function FiltersPanel({
           Limpiar filtros
         </button>
       </div>
+
+      <details className="mt-3 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">
+        <summary className="cursor-pointer text-sm font-bold text-slate-700">
+          Más filtros
+        </summary>
+        <div className="mt-3 grid gap-3 md:grid-cols-2 xl:grid-cols-5">
+          <input
+            value={filters.scoreMin}
+            onChange={(event) =>
+              onFiltersChange({ ...filters, scoreMin: event.target.value })
+            }
+            inputMode="numeric"
+            placeholder="Score mínimo"
+            className="h-11 rounded-2xl border border-slate-300 bg-white px-4 text-sm outline-none focus:border-blue-500 focus:ring-4 focus:ring-blue-100"
+          />
+          <input
+            value={filters.scoreMax}
+            onChange={(event) =>
+              onFiltersChange({ ...filters, scoreMax: event.target.value })
+            }
+            inputMode="numeric"
+            placeholder="Score máximo"
+            className="h-11 rounded-2xl border border-slate-300 bg-white px-4 text-sm outline-none focus:border-blue-500 focus:ring-4 focus:ring-blue-100"
+          />
+          <input
+            value={filters.origin}
+            onChange={(event) =>
+              onFiltersChange({ ...filters, origin: event.target.value })
+            }
+            placeholder="Origen"
+            className="h-11 rounded-2xl border border-slate-300 bg-white px-4 text-sm outline-none focus:border-blue-500 focus:ring-4 focus:ring-blue-100"
+          />
+          <input
+            value={filters.destination}
+            onChange={(event) =>
+              onFiltersChange({
+                ...filters,
+                destination: event.target.value,
+              })
+            }
+            placeholder="Destino"
+            className="h-11 rounded-2xl border border-slate-300 bg-white px-4 text-sm outline-none focus:border-blue-500 focus:ring-4 focus:ring-blue-100"
+          />
+          <input
+            type="date"
+            value={filters.date}
+            onChange={(event) =>
+              onFiltersChange({ ...filters, date: event.target.value })
+            }
+            className="h-11 rounded-2xl border border-slate-300 bg-white px-4 text-sm font-semibold outline-none focus:border-blue-500 focus:ring-4 focus:ring-blue-100"
+          />
+        </div>
+      </details>
     </div>
   );
 }
@@ -715,10 +825,12 @@ function TransactionsTable({
   transactions,
   onSelectTransaction,
   onManageCase,
+  canCreateCases,
 }: {
   transactions: ApiTransaction[];
   onSelectTransaction: (transaction: ApiTransaction) => void;
   onManageCase: (transaction: ApiTransaction) => void;
+  canCreateCases: boolean;
 }) {
   if (transactions.length === 0) {
     return (
@@ -729,31 +841,20 @@ function TransactionsTable({
   }
 
   return (
-    <div className="mt-5 hidden max-w-full overflow-x-auto rounded-2xl border border-slate-200 md:block">
-      <table className="min-w-[1280px] divide-y divide-slate-200 bg-white">
+    <div className="mt-5 hidden rounded-2xl border border-slate-200 md:block">
+      <table className="w-full table-fixed divide-y divide-slate-200 bg-white">
         <thead className="bg-slate-50">
           <tr>
-            {[
-              'ID',
-              'Código',
-              'Cliente',
-              'Monto',
-              'Fecha/Hora',
-              'Origen',
-              'Destino',
-              'Riesgo',
-              'Score',
-              'Reglas',
-              'Estado/Caso',
-              'Acciones',
-            ].map((column) => (
-              <th
-                key={column}
-                className="whitespace-nowrap px-3 py-2.5 text-left text-xs font-bold uppercase tracking-[0.12em] text-slate-500 first:pl-4"
-              >
-                {column}
-              </th>
-            ))}
+            <TableHeader className="w-[11%] pl-4">Código</TableHeader>
+            <TableHeader className="w-[10%]">Cliente</TableHeader>
+            <TableHeader className="w-[10%]">Monto</TableHeader>
+            <TableHeader className="w-[12%]">Fecha/Hora</TableHeader>
+            <TableHeader className="w-[15%]">Ruta</TableHeader>
+            <TableHeader className="w-[8%]">Riesgo</TableHeader>
+            <TableHeader className="w-[7%]">Score</TableHeader>
+            <TableHeader className="w-[8%]">Reglas</TableHeader>
+            <TableHeader className="w-[10%]">Estado/Caso</TableHeader>
+            <TableHeader className="w-[9%]">Acciones</TableHeader>
           </tr>
         </thead>
         <tbody className="divide-y divide-slate-100">
@@ -765,49 +866,43 @@ function TransactionsTable({
                 key={transaction.id}
                 className="align-top transition hover:bg-blue-50/50"
               >
-                <td className="whitespace-nowrap px-3 py-2.5 pl-4 text-sm font-bold text-slate-950">
-                  #{transaction.id}
-                </td>
-                <td className="whitespace-nowrap px-3 py-2.5 text-sm font-semibold text-slate-800">
+                <td className="px-3 py-2.5 pl-4 text-sm font-semibold text-slate-800">
                   {fallback(transaction.transactionCode)}
                 </td>
-                <td className="whitespace-nowrap px-3 py-2.5 text-sm text-slate-700">
+                <td className="px-3 py-2.5 text-sm text-slate-700">
                   {fallback(transaction.customerCode)}
                 </td>
-                <td className="whitespace-nowrap px-3 py-2.5 text-sm font-semibold text-slate-950">
+                <td className="px-3 py-2.5 text-sm font-semibold text-slate-950">
                   {formatCurrencyCLP(transaction.amount)}
                 </td>
-                <td className="whitespace-nowrap px-3 py-2.5 text-sm text-slate-700">
+                <td className="px-3 py-2.5 text-sm text-slate-700">
                   {formatTransactionDateTime(transaction)}
                 </td>
-                <td className="whitespace-nowrap px-3 py-2.5 text-sm text-slate-700">
-                  {fallback(transaction.originLocation)}
+                <td className="px-3 py-2.5 text-sm text-slate-700">
+                  <RouteLabel transaction={transaction} />
                 </td>
-                <td className="whitespace-nowrap px-3 py-2.5 text-sm text-slate-700">
-                  {fallback(transaction.destinationLocation)}
-                </td>
-                <td className="whitespace-nowrap px-3 py-2.5">
+                <td className="px-3 py-2.5">
                   {riskLevel ? (
                     <RiskBadge level={riskLevel} />
                   ) : (
                     <span className="text-sm text-slate-500">N/D</span>
                   )}
                 </td>
-                <td className="whitespace-nowrap px-3 py-2.5 text-sm font-bold text-slate-950">
+                <td className="px-3 py-2.5 text-sm font-bold text-slate-950">
                   {transaction.riskResult?.score ?? 'N/D'}
                 </td>
-                <td className="min-w-36 px-3 py-2.5 text-sm text-slate-700">
+                <td className="px-3 py-2.5 text-sm text-slate-700">
                   {getActivatedRulesLabel(transaction)}
                 </td>
-                <td className="whitespace-nowrap px-3 py-2.5">
+                <td className="px-3 py-2.5">
                   <CaseStatusBadge transaction={transaction} riskLevel={riskLevel} />
                 </td>
-                <td className="whitespace-nowrap px-3 py-2.5">
-                  <div className="flex items-center gap-2">
+                <td className="px-3 py-2.5">
+                  <div className="flex flex-col gap-2">
                     <button
                       type="button"
                       onClick={() => onSelectTransaction(transaction)}
-                      className="inline-flex items-center gap-1 rounded-xl border border-slate-200 px-3 py-2 text-xs font-bold text-slate-700 transition hover:border-blue-200 hover:bg-blue-50 hover:text-blue-700"
+                      className="inline-flex items-center justify-center gap-1 rounded-xl border border-slate-200 px-2 py-2 text-xs font-bold text-slate-700 transition hover:border-blue-200 hover:bg-blue-50 hover:text-blue-700"
                     >
                       <FiEye className="h-3.5 w-3.5" aria-hidden="true" />
                       Ver detalle
@@ -816,6 +911,7 @@ function TransactionsTable({
                       transaction={transaction}
                       riskLevel={riskLevel}
                       onManageCase={onManageCase}
+                      canCreateCases={canCreateCases}
                     />
                   </div>
                 </td>
@@ -832,10 +928,12 @@ function MobileTransactionCards({
   transactions,
   onSelectTransaction,
   onManageCase,
+  canCreateCases,
 }: {
   transactions: ApiTransaction[];
   onSelectTransaction: (transaction: ApiTransaction) => void;
   onManageCase: (transaction: ApiTransaction) => void;
+  canCreateCases: boolean;
 }) {
   if (transactions.length === 0) {
     return null;
@@ -854,7 +952,7 @@ function MobileTransactionCards({
             <div className="flex items-start justify-between gap-3">
               <div>
                 <p className="text-xs font-bold uppercase tracking-[0.12em] text-slate-500">
-                  #{transaction.id}
+                  Código
                 </p>
                 <h3 className="mt-1 text-base font-bold text-slate-950">
                   {fallback(transaction.transactionCode)}
@@ -867,12 +965,14 @@ function MobileTransactionCards({
             </div>
             <dl className="mt-4 grid grid-cols-2 gap-3 text-sm">
               <Fact label="Monto" value={formatCurrencyCLP(transaction.amount)} />
-              <Fact label="Score" value={transaction.riskResult?.score ?? 'N/D'} />
-              <Fact label="Origen" value={fallback(transaction.originLocation)} />
               <Fact
-                label="Destino"
-                value={fallback(transaction.destinationLocation)}
+                label="Fecha/hora"
+                value={formatTransactionDateTime(transaction)}
               />
+              <Fact label="Score" value={transaction.riskResult?.score ?? 'N/D'} />
+              <Fact label="Estado/Caso" value={<CaseStatusBadge transaction={transaction} riskLevel={riskLevel} />} />
+              <Fact label="Ruta" value={<RouteLabel transaction={transaction} />} />
+              <Fact label="Reglas" value={getActivatedRulesLabel(transaction)} />
             </dl>
             <div className="mt-4 flex flex-wrap gap-2">
               <button
@@ -887,6 +987,7 @@ function MobileTransactionCards({
                 transaction={transaction}
                 riskLevel={riskLevel}
                 onManageCase={onManageCase}
+                canCreateCases={canCreateCases}
               />
             </div>
           </article>
@@ -901,11 +1002,13 @@ function TransactionDetailModal({
   batch,
   onClose,
   onManageCase,
+  canCreateCases,
 }: {
   transaction: ApiTransaction | null;
   batch: HistoryRecord | null;
   onClose: () => void;
   onManageCase: (transaction: ApiTransaction) => void;
+  canCreateCases: boolean;
 }) {
   if (!transaction) {
     return null;
@@ -914,145 +1017,155 @@ function TransactionDetailModal({
   const riskLevel = getRisk(transaction);
   const activeRules = getActiveRules(transaction);
   const associatedCase = transaction.riskCases?.[0];
+  const canManageCase = Boolean(
+    associatedCase ||
+      (canCreateCases && riskLevel && riskLevel !== 'Bajo'),
+  );
 
   return (
-    <div
-      className="fixed inset-0 z-50 flex items-end bg-slate-950/40 p-4 backdrop-blur-sm sm:items-center sm:justify-center"
-      role="dialog"
-      aria-modal="true"
-    >
-      <section className="max-h-[90vh] w-full max-w-5xl overflow-y-auto rounded-[24px] bg-white p-5 shadow-2xl lg:p-6">
-        <div className="flex items-start justify-between gap-4">
-          <div>
-            <p className="text-xs font-bold uppercase tracking-[0.16em] text-blue-700">
-              Detalle de transacción
-            </p>
-            <h2 className="mt-2 text-2xl font-bold text-slate-950">
-              {fallback(transaction.transactionCode)}
-            </h2>
-          </div>
+    <DetailPanel
+      icon={<FiFileText className="h-5 w-5" aria-hidden="true" />}
+      eyebrow="Detalle de transacción"
+      title={fallback(transaction.transactionCode)}
+      badge={
+        <DetailBadge tone={getTransactionDetailTone(riskLevel)}>
+          {riskLevel ? `Riesgo ${riskLevel}` : 'Sin clasificación'}
+        </DetailBadge>
+      }
+      meta={`${formatTransactionDateTime(transaction)} · Lote #${transaction.batchId}`}
+      onClose={onClose}
+      footer={
+        canManageCase ? (
           <button
             type="button"
-            onClick={onClose}
-            className="flex h-10 w-10 items-center justify-center rounded-2xl border border-slate-200 text-slate-500 transition hover:bg-slate-50 hover:text-slate-900"
-            aria-label="Cerrar detalle"
+            onClick={() => onManageCase(transaction)}
+            className="rounded-xl bg-blue-700 px-4 py-2.5 text-sm font-semibold text-white hover:bg-blue-800"
           >
-            <FiX className="h-5 w-5" aria-hidden="true" />
+            {associatedCase ? 'Gestionar caso' : 'Crear caso'}
           </button>
-        </div>
+        ) : undefined
+      }
+    >
+      <DetailSection title="Resumen" tone={getTransactionDetailTone(riskLevel)}>
+        <DetailGrid>
+          <DetailField label="Cliente" value={transaction.customerCode} />
+          <DetailField
+            label="Monto"
+            value={formatCurrencyCLP(transaction.amount)}
+          />
+          <DetailField
+            label="Nivel de riesgo"
+            value={riskLevel ?? 'No disponible'}
+          />
+          <DetailField
+            label="Score"
+            value={`${transaction.riskResult?.score ?? 'N/D'}/100`}
+          />
+        </DetailGrid>
+      </DetailSection>
 
-        <div className="mt-6 grid gap-4 xl:grid-cols-[minmax(0,0.9fr)_minmax(360px,1.1fr)]">
-          <section>
-            <div className="grid gap-3 sm:grid-cols-2">
-              <Fact label="ID" value={`#${transaction.id}`} />
-              <Fact label="Código" value={transaction.transactionCode} />
-              <Fact label="Cliente" value={transaction.customerCode} />
-              <Fact label="Monto" value={formatCurrencyCLP(transaction.amount)} />
-              <Fact
-                label="Fecha/hora"
-                value={formatTransactionDateTime(transaction)}
-              />
-              <Fact label="Origen" value={fallback(transaction.originLocation)} />
-              <Fact
-                label="Destino"
-                value={fallback(transaction.destinationLocation)}
-              />
-              <Fact label="Lote" value={`#${transaction.batchId}`} />
-              <Fact label="Archivo" value={batch?.fileName ?? 'No disponible'} />
-              <Fact
-                label="Score"
-                value={`${transaction.riskResult?.score ?? 'N/D'}/100`}
-              />
-              <Fact label="Clasificación" value={riskLevel ?? 'No disponible'} />
-              <Fact
-                label="Plan de acción"
-                value={riskLevel ? actionByRisk[riskLevel] : 'No disponible'}
-              />
-            </div>
+      <DetailSection title="Identificación">
+        <DetailGrid>
+          <DetailField label="Código" value={transaction.transactionCode} />
+          <DetailField label="ID interno" value={`#${transaction.id}`} />
+          <DetailField label="Lote" value={`#${transaction.batchId}`} />
+          <DetailField
+            label="Archivo"
+            value={batch?.fileName ?? 'No disponible'}
+          />
+        </DetailGrid>
+      </DetailSection>
 
-            <div className="mt-4 rounded-2xl border border-blue-100 bg-blue-50 p-4">
-              <p className="text-sm font-bold text-blue-950">
-                Explicación del riesgo
-              </p>
-              <p className="mt-2 text-sm leading-6 text-blue-900">
-                {transaction.riskResult?.ruleDetails?.finalReason ??
-                  transaction.riskResult?.observation ??
-                  'Sin explicación disponible desde la API.'}
-              </p>
-              {transaction.riskResult?.ruleDetails?.algorithm && (
-                <p className="mt-3 text-xs leading-5 text-blue-800">
-                  {transaction.riskResult.ruleDetails.algorithm}
-                </p>
-              )}
-            </div>
+      <DetailSection title="Información operacional">
+        <DetailGrid>
+          <DetailField
+            label="Fecha y hora"
+            value={formatTransactionDateTime(transaction)}
+          />
+          <DetailField
+            label="Origen"
+            value={fallback(transaction.originLocation)}
+          />
+          <DetailField
+            label="Destino"
+            value={fallback(transaction.destinationLocation)}
+          />
+          <DetailField
+            label="Plan de acción"
+            value={riskLevel ? actionByRisk[riskLevel] : 'No disponible'}
+            wide
+          />
+        </DetailGrid>
+      </DetailSection>
 
-            <div className="mt-4 rounded-2xl border border-slate-200 p-4">
-              <p className="text-sm font-bold text-slate-950">
-                Caso asociado
-              </p>
-              {associatedCase ? (
-                <div className="mt-3 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                  <div>
-                    <p className="text-sm font-semibold text-slate-800">
-                      Caso #{associatedCase.id} · {formatCaseStatus(associatedCase.status)}
-                    </p>
-                    <p className="mt-1 text-xs text-slate-500">
-                      Prioridad {associatedCase.priority}
-                    </p>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => onManageCase(transaction)}
-                    className="inline-flex items-center justify-center rounded-xl bg-slate-950 px-3 py-2 text-xs font-bold text-white"
-                  >
-                    Ver caso
-                  </button>
-                </div>
-              ) : (
-                <div className="mt-3 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                  <p className="text-sm leading-6 text-slate-600">
-                    Esta transacción aún no posee un caso asociado.
-                  </p>
-                  {riskLevel && riskLevel !== 'Bajo' && (
-                    <button
-                      type="button"
-                      onClick={() => onManageCase(transaction)}
-                      className="inline-flex items-center justify-center rounded-xl bg-slate-950 px-3 py-2 text-xs font-bold text-white"
-                    >
-                      Gestionar caso
-                    </button>
-                  )}
-                </div>
-              )}
-            </div>
-          </section>
+      <DetailSection title="Explicación del riesgo" tone="blue">
+        <p className="break-words text-sm leading-6 text-blue-950">
+          {transaction.riskResult?.ruleDetails?.finalReason ??
+            transaction.riskResult?.observation ??
+            'Sin explicación disponible desde la API.'}
+        </p>
+        {transaction.riskResult?.ruleDetails?.algorithm ? (
+          <details className="mt-3 rounded-xl border border-blue-200 bg-white px-3 py-2">
+            <summary className="cursor-pointer text-xs font-bold text-blue-800">
+              Ver detalle técnico
+            </summary>
+            <p className="mt-2 break-words text-xs leading-5 text-slate-600">
+              {transaction.riskResult.ruleDetails.algorithm}
+            </p>
+          </details>
+        ) : null}
+      </DetailSection>
 
-          <section className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
-            <div className="flex items-center justify-between gap-3">
-              <h3 className="text-sm font-bold uppercase tracking-[0.12em] text-slate-500">
-                Reglas activadas R1-R5
-              </h3>
-              <span className="text-xs font-semibold text-slate-500">
-                {activeRules.length} activa(s)
-              </span>
-            </div>
+      <DetailSection
+        title="Reglas activadas R1-R5"
+        description={`${activeRules.length} regla(s) activa(s)`}
+      >
+        {activeRules.length > 0 ? (
+          <div className="space-y-3">
+            {activeRules.map((rule) => (
+              <RuleCard key={rule.code} rule={rule} />
+            ))}
+          </div>
+        ) : (
+          <DetailNote>
+            No hay reglas activadas informadas para esta transacción.
+          </DetailNote>
+        )}
+      </DetailSection>
 
-            <div className="mt-3 space-y-3">
-              {activeRules.length > 0 ? (
-                activeRules.map((rule) => (
-                  <RuleCard key={rule.code} rule={rule} />
-                ))
-              ) : (
-                <p className="rounded-2xl border border-dashed border-slate-300 bg-white px-4 py-5 text-sm text-slate-500">
-                  No hay reglas activadas informadas para esta transacción.
-                </p>
-              )}
-            </div>
-          </section>
-        </div>
-      </section>
-    </div>
+      <DetailSection title="Detalle completo o trazabilidad">
+        {associatedCase ? (
+          <DetailGrid>
+            <DetailField label="Caso" value={`#${associatedCase.id}`} />
+            <DetailField
+              label="Estado"
+              value={formatCaseStatus(associatedCase.status)}
+            />
+            <DetailField label="Prioridad" value={associatedCase.priority} />
+            <DetailField
+              label="Responsable"
+              value={
+                associatedCase.responsibleUser?.name ??
+                associatedCase.responsibleName ??
+                'Sin asignar'
+              }
+            />
+          </DetailGrid>
+        ) : (
+          <DetailNote>
+            Esta transacción aún no posee un caso asociado.
+          </DetailNote>
+        )}
+      </DetailSection>
+    </DetailPanel>
   );
+}
+
+function getTransactionDetailTone(riskLevel?: RiskLevel | null) {
+  if (riskLevel === 'Alto') return 'red' as const;
+  if (riskLevel === 'Medio') return 'amber' as const;
+  if (riskLevel === 'Bajo') return 'emerald' as const;
+  return 'slate' as const;
 }
 
 function RuleCard({ rule }: { rule: RiskRuleDetail }) {
@@ -1181,7 +1294,6 @@ function Fact({ label, value }: { label: string; value: ReactNode }) {
 
 function CaseStatusBadge({
   transaction,
-  riskLevel,
 }: {
   transaction: ApiTransaction;
   riskLevel: RiskLevel | null;
@@ -1192,14 +1304,6 @@ function CaseStatusBadge({
     return (
       <span className="inline-flex rounded-full bg-blue-50 px-3 py-1 text-xs font-bold text-blue-700 ring-1 ring-blue-100">
         Caso #{existingCase.id} · {formatCaseStatus(existingCase.status)}
-      </span>
-    );
-  }
-
-  if (riskLevel === 'Bajo') {
-    return (
-      <span className="inline-flex rounded-full bg-emerald-50 px-3 py-1 text-xs font-bold text-emerald-700 ring-1 ring-emerald-100">
-        Monitoreo
       </span>
     );
   }
@@ -1215,18 +1319,19 @@ function CaseAction({
   transaction,
   riskLevel,
   onManageCase,
+  canCreateCases,
 }: {
   transaction: ApiTransaction;
   riskLevel: RiskLevel | null;
   onManageCase: (transaction: ApiTransaction) => void;
+  canCreateCases: boolean;
 }) {
   const existingCase = transaction.riskCases?.[0];
 
-  if (riskLevel === 'Bajo') {
-    return null;
-  }
-
-  if (!riskLevel) {
+  if (
+    !existingCase &&
+    (!canCreateCases || !riskLevel || riskLevel === 'Bajo')
+  ) {
     return null;
   }
 
@@ -1236,8 +1341,37 @@ function CaseAction({
       onClick={() => onManageCase(transaction)}
       className="inline-flex items-center rounded-xl bg-slate-950 px-3 py-2 text-xs font-bold text-white transition hover:-translate-y-0.5 hover:bg-slate-800"
     >
-      {existingCase ? 'Ver caso' : 'Gestionar caso'}
+      Gestionar caso
     </button>
+  );
+}
+
+function TableHeader({
+  children,
+  className = '',
+}: {
+  children: ReactNode;
+  className?: string;
+}) {
+  return (
+    <th
+      className={`px-3 py-2.5 text-left text-xs font-bold uppercase tracking-[0.12em] text-slate-500 ${className}`}
+    >
+      {children}
+    </th>
+  );
+}
+
+function RouteLabel({ transaction }: { transaction: ApiTransaction }) {
+  return (
+    <span className="block min-w-0 text-xs leading-5 text-slate-600">
+      <span className="block truncate font-semibold text-slate-800">
+        {fallback(transaction.originLocation)}
+      </span>
+      <span className="block truncate">
+        hacia {fallback(transaction.destinationLocation)}
+      </span>
+    </span>
   );
 }
 
@@ -1337,8 +1471,67 @@ function Message({
   );
 }
 
-function hasTransactions(batch: HistoryRecord) {
-  return (batch.totalRecords ?? 0) > 0;
+function canShowBatchResults(batch: HistoryRecord) {
+  return (
+    getBatchStatus(batch.status) === 'completed' &&
+    (batch.totalRecords ?? 0) > 0
+  );
+}
+
+function getBatchStatus(value?: string | null): BatchStatus {
+  const normalized = String(value ?? '').trim().toUpperCase();
+
+  if (
+    ['COMPLETED', 'COMPLETADO', 'COMPLETE', 'SUCCESS', 'SUCCESSFUL'].includes(
+      normalized,
+    )
+  ) {
+    return 'completed';
+  }
+
+  if (
+    ['FAILED', 'FALLIDO', 'ERROR', 'ERROR_PROCESSING'].includes(normalized) ||
+    normalized.includes('FALL')
+  ) {
+    return 'failed';
+  }
+
+  if (
+    ['PENDING', 'PENDIENTE', 'PROCESSING', 'EN_PROCESO'].includes(normalized)
+  ) {
+    return 'pending';
+  }
+
+  return 'unknown';
+}
+
+function getBatchStatusLabel(value?: string | null) {
+  const labels: Record<BatchStatus, string> = {
+    completed: 'Completado',
+    failed: 'Fallido',
+    pending: 'Pendiente',
+    unknown: fallback(value),
+  };
+
+  return labels[getBatchStatus(value)];
+}
+
+function BatchStatusBadge({ status }: { status?: string | null }) {
+  const normalizedStatus = getBatchStatus(status);
+  const classes: Record<BatchStatus, string> = {
+    completed: 'bg-emerald-50 text-emerald-700 ring-emerald-100',
+    failed: 'bg-red-50 text-red-700 ring-red-100',
+    pending: 'bg-amber-50 text-amber-700 ring-amber-100',
+    unknown: 'bg-slate-100 text-slate-600 ring-slate-200',
+  };
+
+  return (
+    <span
+      className={`inline-flex w-fit rounded-full px-3 py-1 text-xs font-bold ring-1 ${classes[normalizedStatus]}`}
+    >
+      {getBatchStatusLabel(status)}
+    </span>
+  );
 }
 
 function calculateMetrics(
@@ -1423,7 +1616,6 @@ function filterAndSortTransactions(
       const risk = getRisk(transaction);
       const score = transaction.riskResult?.score;
       const searchable = [
-        transaction.id,
         transaction.transactionCode,
         transaction.customerCode,
         getActivatedRulesLabel(transaction),
@@ -1513,11 +1705,36 @@ function fallback(value?: string | number | null) {
 }
 
 function formatTransactionDateTime(transaction: ApiTransaction) {
-  const date = formatDate(transaction.transactionDate);
+  const date = formatTransactionDate(transaction.transactionDate);
+  const time = formatTransactionHour(transaction.transactionHour);
 
-  return transaction.transactionHour
-    ? `${date} · ${transaction.transactionHour}`
-    : date;
+  return time ? `${date} · ${time}` : date;
+}
+
+function formatTransactionDate(value?: string | null) {
+  const datePart = String(value ?? '').trim().slice(0, 10);
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(datePart);
+
+  if (match) {
+    const [, year, month, day] = match;
+
+    return `${day}-${month}-${year}`;
+  }
+
+  return fallback(value);
+}
+
+function formatTransactionHour(value?: string | null) {
+  const time = String(value ?? '').trim();
+  const match = /^(\d{2}):(\d{2})(?::\d{2})?/.exec(time);
+
+  if (match) {
+    const [, hour, minute] = match;
+
+    return `${hour}:${minute}`;
+  }
+
+  return time;
 }
 
 function formatCaseStatus(value?: string | null) {

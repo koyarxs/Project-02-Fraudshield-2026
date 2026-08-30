@@ -1,15 +1,29 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { Link } from 'react-router-dom';
+import { FiBriefcase } from 'react-icons/fi';
 import DashboardLayout from '../components/layout/DashboardLayout';
-import { useAuth } from '../hooks/useAuth';
+import {
+  DetailBadge,
+  DetailField,
+  DetailGrid,
+  DetailNote,
+  DetailPanel,
+  DetailSection,
+} from '../components/ui/DetailPanel';
 import riskCaseService from '../services/risk-case.service';
-import type { ApiRiskCase } from '../types/transaction';
+import type {
+  ApiRiskCase,
+  RiskCasePriority,
+  RiskCaseStatus,
+} from '../types/transaction';
 import { formatDate } from '../utils/formatDate';
+import { useAuth } from '../hooks/useAuth';
 
 const PAGE_SIZE = 10;
 
 export default function CaseHistory() {
   const { user } = useAuth();
+  const isAdministrator = user?.role === 'ADMINISTRADOR';
   const [cases, setCases] = useState<ApiRiskCase[]>([]);
   const [selectedCase, setSelectedCase] = useState<ApiRiskCase | null>(null);
   const [query, setQuery] = useState('');
@@ -19,9 +33,9 @@ export default function CaseHistory() {
   >('updatedAt');
   const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('desc');
   const [page, setPage] = useState(1);
-  const [assignmentFilter, setAssignmentFilter] = useState<
-    'TODOS' | 'MIS_CASOS' | 'SIN_ASIGNAR'
-  >('TODOS');
+  const [priorityFilter, setPriorityFilter] = useState<'' | RiskCasePriority>(
+    '',
+  );
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState('');
 
@@ -71,17 +85,16 @@ export default function CaseHistory() {
           riskCase.status,
           riskCase.reviewResult,
           riskCase.responsibleName,
+          riskCase.responsibleUser?.name,
+          riskCase.responsibleUser?.email,
+          riskCase.transaction?.transactionCode,
         ]
           .join(' ')
           .toLowerCase();
 
         return (
           (!status || riskCase.status === status) &&
-          (assignmentFilter === 'TODOS' ||
-            (assignmentFilter === 'MIS_CASOS' &&
-              riskCase.responsibleUserId === user?.id) ||
-            (assignmentFilter === 'SIN_ASIGNAR' &&
-              !riskCase.responsibleUserId)) &&
+          (!priorityFilter || riskCase.priority === priorityFilter) &&
           searchable.includes(normalizedQuery)
         );
       })
@@ -107,13 +120,12 @@ export default function CaseHistory() {
         return (first.scoreSnapshot - second.scoreSnapshot) * direction;
       });
   }, [
-    assignmentFilter,
     cases,
+    priorityFilter,
     query,
     sortDirection,
     sortKey,
     status,
-    user?.id,
   ]);
 
   const totalPages = Math.max(1, Math.ceil(visibleCases.length / PAGE_SIZE));
@@ -121,7 +133,7 @@ export default function CaseHistory() {
 
   useEffect(() => {
     setPage(1);
-  }, [assignmentFilter, query, sortDirection, sortKey, status]);
+  }, [priorityFilter, query, sortDirection, sortKey, status]);
 
   const summary = useMemo(
     () => ({
@@ -140,62 +152,58 @@ export default function CaseHistory() {
   return (
     <DashboardLayout>
       <div className="space-y-4">
-        <section className="app-card rounded-[24px] p-5 lg:p-6">
+        <section className="module-sticky-header app-card rounded-[24px] p-5 lg:p-6">
           <p className="text-sm font-semibold uppercase tracking-[0.16em] text-blue-700">
-            Historial de casos
+            GESTIÓN DE CASOS
           </p>
           <h1 className="mt-2 text-3xl font-bold text-slate-950">
-            Trazabilidad de revisiones realizadas por analistas.
+            Seguimiento de revisiones realizadas por analistas
           </h1>
         </section>
 
         <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-          <SummaryCard label="Pendientes" value={summary.pending} />
-          <SummaryCard label="En revision" value={summary.inReview} />
-          <SummaryCard label="Resueltos" value={summary.resolved} />
+          <SummaryCard label="Casos pendientes" value={summary.pending} />
+          <SummaryCard label="Casos en revisión" value={summary.inReview} />
+          <SummaryCard label="Casos resueltos" value={summary.resolved} />
           <SummaryCard
-            label="Alto pendientes"
+            label="Riesgo alto pendiente"
             value={summary.highRiskPending}
           />
         </section>
 
         <section className="app-card rounded-[24px] p-5 lg:p-6">
-          <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+          <div className="flex min-w-0 flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
             <h2 className="text-lg font-bold text-slate-950">
-              Casos gestionados
+              {isAdministrator ? 'Todos los casos' : 'Mis casos'}
             </h2>
-            <div className="flex flex-col gap-3 sm:flex-row">
+            <div className="grid w-full min-w-0 gap-3 sm:grid-cols-2 xl:w-auto xl:grid-cols-[minmax(260px,1fr)_minmax(150px,0.75fr)_minmax(170px,0.85fr)_minmax(150px,0.75fr)]">
               <input
                 value={query}
                 onChange={(event) => setQuery(event.target.value)}
-                placeholder="Buscar caso, transaccion o responsable"
-                className="rounded-2xl border border-slate-300 px-4 py-2.5 text-sm outline-none focus:border-blue-500 focus:ring-4 focus:ring-blue-100"
+                placeholder="Buscar caso, transacción o responsable"
+                className="w-full min-w-0 rounded-2xl border border-slate-300 px-4 py-2.5 text-sm outline-none focus:border-blue-500 focus:ring-4 focus:ring-blue-100"
               />
               <select
                 value={status}
                 onChange={(event) => setStatus(event.target.value)}
-                className="rounded-2xl border border-slate-300 px-4 py-2.5 text-sm font-semibold outline-none focus:border-blue-500 focus:ring-4 focus:ring-blue-100"
+                className="w-full min-w-0 rounded-2xl border border-slate-300 px-4 py-2.5 text-sm font-semibold outline-none focus:border-blue-500 focus:ring-4 focus:ring-blue-100"
               >
-                <option value="">Todos</option>
+                <option value="">Todos los estados</option>
                 <option value="PENDIENTE">Pendiente</option>
-                <option value="EN_REVISION">En revision</option>
+                <option value="EN_REVISION">En revisión</option>
                 <option value="RESUELTO">Resuelto</option>
               </select>
               <select
-                value={assignmentFilter}
+                value={priorityFilter}
                 onChange={(event) =>
-                  setAssignmentFilter(
-                    event.target.value as
-                      | 'TODOS'
-                      | 'MIS_CASOS'
-                      | 'SIN_ASIGNAR',
-                  )
+                  setPriorityFilter(event.target.value as '' | RiskCasePriority)
                 }
-                className="rounded-2xl border border-slate-300 px-4 py-2.5 text-sm font-semibold outline-none focus:border-blue-500 focus:ring-4 focus:ring-blue-100"
+                className="w-full min-w-0 rounded-2xl border border-slate-300 px-4 py-2.5 text-sm font-semibold outline-none focus:border-blue-500 focus:ring-4 focus:ring-blue-100"
               >
-                <option value="TODOS">Todos</option>
-                <option value="MIS_CASOS">Mis casos</option>
-                <option value="SIN_ASIGNAR">Sin asignar</option>
+                <option value="">Todas las prioridades</option>
+                <option value="NORMAL">Normal</option>
+                <option value="ALTA">Alta</option>
+                <option value="URGENTE">Urgente</option>
               </select>
               <select
                 value={`${sortKey}:${sortDirection}`}
@@ -206,7 +214,7 @@ export default function CaseHistory() {
                   setSortKey(nextKey);
                   setSortDirection(nextDirection);
                 }}
-                className="rounded-2xl border border-slate-300 px-4 py-2.5 text-sm font-semibold outline-none focus:border-blue-500 focus:ring-4 focus:ring-blue-100"
+                className="w-full min-w-0 rounded-2xl border border-slate-300 px-4 py-2.5 text-sm font-semibold outline-none focus:border-blue-500 focus:ring-4 focus:ring-blue-100"
               >
                 <option value="updatedAt:desc">Más recientes</option>
                 <option value="priority:desc">Prioridad mayor</option>
@@ -227,83 +235,74 @@ export default function CaseHistory() {
               No hay casos que coincidan con los filtros.
             </div>
           ) : (
-            <div className="mt-5 overflow-x-auto rounded-2xl border border-slate-200">
-              <table className="min-w-[1050px] divide-y divide-slate-200 bg-white">
-                <thead className="bg-slate-50">
-                  <tr>
-                    {[
-                      'ID caso',
-                      'ID transaccion',
-                      'Riesgo',
-                      'Score',
-                      'Prioridad',
-                      'Estado',
-                      'Resultado',
-                      'Responsable',
-                      'Fecha',
-                      'Acciones',
-                    ].map((column) => (
-                      <th
-                        key={column}
-                        className="whitespace-nowrap px-3 py-2.5 text-left text-xs font-bold uppercase tracking-[0.12em] text-slate-500"
-                      >
-                        {column}
-                      </th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-100">
-                  {pagedCases.map((riskCase) => (
-                    <tr key={riskCase.id} className="align-top hover:bg-blue-50/40">
-                      <td className="whitespace-nowrap px-3 py-2.5 text-sm font-semibold text-slate-950">
-                        #{riskCase.id}
-                      </td>
-                      <td className="whitespace-nowrap px-3 py-2.5 text-sm text-slate-700">
-                        #{riskCase.transactionId}
-                      </td>
-                      <td className="whitespace-nowrap px-3 py-2.5 text-sm font-semibold text-slate-700">
-                        {riskCase.riskLevelSnapshot}
-                      </td>
-                      <td className="whitespace-nowrap px-3 py-2.5 text-sm text-slate-700">
-                        {riskCase.scoreSnapshot}
-                      </td>
-                      <td className="whitespace-nowrap px-3 py-2.5 text-sm font-semibold text-slate-700">
-                        {formatPriority(riskCase.priority)}
-                      </td>
-                      <td className="whitespace-nowrap px-3 py-2.5 text-sm text-slate-700">
-                        {formatCaseStatus(riskCase.status)}
-                      </td>
-                      <td className="whitespace-nowrap px-3 py-2.5 text-sm text-slate-700">
-                        {formatReviewResult(riskCase.reviewResult)}
-                      </td>
-                      <td className="whitespace-nowrap px-3 py-2.5 text-sm text-slate-700">
-                        {riskCase.responsibleName ?? 'No disponible'}
-                      </td>
-                      <td className="whitespace-nowrap px-3 py-2.5 text-sm text-slate-700">
-                        {formatDate(riskCase.updatedAt)}
-                      </td>
-                      <td className="whitespace-nowrap px-3 py-2.5">
-                        <div className="flex flex-wrap gap-2">
-                          <button
-                            type="button"
-                            onClick={() => setSelectedCase(riskCase)}
-                            className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-bold text-slate-700 hover:border-blue-200 hover:bg-blue-50 hover:text-blue-700"
-                          >
-                            Detalle
-                          </button>
-                          <Link
-                            to={`/case-management?transactionId=${riskCase.transactionId}`}
-                            className="rounded-xl bg-blue-700 px-3 py-2 text-xs font-bold text-white hover:bg-blue-800"
-                          >
-                            Gestionar
-                          </Link>
-                        </div>
-                      </td>
+            <>
+              <div className="mt-5 hidden overflow-hidden rounded-2xl border border-slate-200 lg:block">
+                <table className="w-full table-fixed divide-y divide-slate-200 bg-white">
+                  <thead className="bg-slate-50">
+                    <tr>
+                      <TableHeader className="w-[11%]">Caso</TableHeader>
+                      <TableHeader className="w-[14%]">Transacción</TableHeader>
+                      <TableHeader className="w-[10%]">Riesgo</TableHeader>
+                      <TableHeader className="w-[8%]">Score</TableHeader>
+                      <TableHeader className="w-[10%]">Prioridad</TableHeader>
+                      <TableHeader className="w-[11%]">Estado</TableHeader>
+                      <TableHeader className="w-[13%]">Resultado</TableHeader>
+                      <TableHeader className="w-[12%]">Responsable</TableHeader>
+                      <TableHeader className="w-[11%]">Acciones</TableHeader>
                     </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100">
+                    {pagedCases.map((riskCase) => (
+                      <tr key={riskCase.id} className="align-top hover:bg-blue-50/40">
+                        <td className="px-3 py-2.5 text-sm font-semibold text-slate-950">
+                          #{riskCase.id}
+                        </td>
+                        <td className="truncate px-3 py-2.5 text-sm text-slate-700">
+                          {getTransactionLabel(riskCase)}
+                        </td>
+                        <td className="px-3 py-2.5">
+                          <RiskBadge value={riskCase.riskLevelSnapshot} />
+                        </td>
+                        <td className="px-3 py-2.5 text-sm text-slate-700">
+                          {riskCase.scoreSnapshot}
+                        </td>
+                        <td className="px-3 py-2.5">
+                          <PriorityBadge priority={riskCase.priority} />
+                        </td>
+                        <td className="px-3 py-2.5">
+                          <StatusBadge status={riskCase.status} />
+                        </td>
+                        <td className="px-3 py-2.5 text-sm text-slate-700">
+                          {getResultLabel(riskCase)}
+                        </td>
+                        <td className="truncate px-3 py-2.5 text-sm text-slate-700">
+                          {getResponsibleName(riskCase)}
+                        </td>
+                        <td className="px-3 py-2.5">
+                          <div className="flex flex-col gap-2">
+                            <button
+                              type="button"
+                              onClick={() => setSelectedCase(riskCase)}
+                              className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-bold text-slate-700 hover:border-blue-200 hover:bg-blue-50 hover:text-blue-700"
+                            >
+                              Detalle
+                            </button>
+                            <CaseActionLink
+                              riskCase={riskCase}
+                              onOpenDetail={setSelectedCase}
+                            />
+                          </div>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              <MobileCaseCards
+                cases={pagedCases}
+                onOpenDetail={setSelectedCase}
+              />
+            </>
           )}
           {!isLoading && !error && visibleCases.length > PAGE_SIZE ? (
             <div className="mt-5 flex flex-col gap-3 text-sm text-slate-600 sm:flex-row sm:items-center sm:justify-between">
@@ -351,6 +350,165 @@ function SummaryCard({ label, value }: { label: string; value: number }) {
   );
 }
 
+function MobileCaseCards({
+  cases,
+  onOpenDetail,
+}: {
+  cases: ApiRiskCase[];
+  onOpenDetail: (riskCase: ApiRiskCase) => void;
+}) {
+  return (
+    <div className="mt-5 space-y-3 lg:hidden">
+      {cases.map((riskCase) => (
+        <article
+          key={riskCase.id}
+          className="rounded-2xl border border-slate-200 bg-white p-4"
+        >
+          <div className="flex items-start justify-between gap-3">
+            <div className="min-w-0">
+              <p className="text-sm font-bold text-slate-950">
+                Caso #{riskCase.id}
+              </p>
+              <p className="mt-1 truncate text-sm text-slate-600">
+                {getTransactionLabel(riskCase)}
+              </p>
+            </div>
+            <StatusBadge status={riskCase.status} />
+          </div>
+
+          <dl className="mt-4 grid grid-cols-2 gap-3 text-sm">
+            <MobileFact label="Riesgo" value={<RiskBadge value={riskCase.riskLevelSnapshot} />} />
+            <MobileFact label="Score" value={riskCase.scoreSnapshot} />
+            <MobileFact label="Prioridad" value={<PriorityBadge priority={riskCase.priority} />} />
+            <MobileFact label="Resultado" value={getResultLabel(riskCase)} />
+            <MobileFact label="Responsable" value={getResponsibleName(riskCase)} />
+            <MobileFact label="Fecha" value={formatDate(riskCase.updatedAt)} />
+          </dl>
+
+          <div className="mt-4 flex flex-wrap gap-2">
+            <button
+              type="button"
+              onClick={() => onOpenDetail(riskCase)}
+              className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-bold text-slate-700 hover:border-blue-200 hover:bg-blue-50 hover:text-blue-700"
+            >
+              Detalle
+            </button>
+            <CaseActionLink riskCase={riskCase} onOpenDetail={onOpenDetail} />
+          </div>
+        </article>
+      ))}
+    </div>
+  );
+}
+
+function MobileFact({
+  label,
+  value,
+}: {
+  label: string;
+  value: ReactNode;
+}) {
+  return (
+    <div className="rounded-xl bg-slate-50 px-3 py-2">
+      <dt className="text-xs font-bold uppercase tracking-[0.12em] text-slate-500">
+        {label}
+      </dt>
+      <dd className="mt-1 font-semibold text-slate-900">{value}</dd>
+    </div>
+  );
+}
+
+function TableHeader({
+  children,
+  className = '',
+}: {
+  children: ReactNode;
+  className?: string;
+}) {
+  return (
+    <th
+      className={`px-3 py-2.5 text-left text-xs font-bold uppercase tracking-[0.12em] text-slate-500 ${className}`}
+    >
+      {children}
+    </th>
+  );
+}
+
+function RiskBadge({ value }: { value?: string | null }) {
+  const risk = value?.toUpperCase();
+  const classes =
+    risk === 'ALTO'
+      ? 'bg-red-50 text-red-700 ring-red-100'
+      : risk === 'MEDIO'
+        ? 'bg-amber-50 text-amber-700 ring-amber-100'
+        : risk === 'BAJO'
+          ? 'bg-emerald-50 text-emerald-700 ring-emerald-100'
+          : 'bg-slate-100 text-slate-600 ring-slate-200';
+
+  return (
+    <span className={`inline-flex rounded-full px-3 py-1 text-xs font-bold ring-1 ${classes}`}>
+      {formatRisk(value)}
+    </span>
+  );
+}
+
+function PriorityBadge({ priority }: { priority: RiskCasePriority }) {
+  const classes: Record<RiskCasePriority, string> = {
+    NORMAL: 'bg-slate-100 text-slate-700 ring-slate-200',
+    ALTA: 'bg-amber-50 text-amber-700 ring-amber-100',
+    URGENTE: 'bg-red-50 text-red-700 ring-red-100',
+  };
+
+  return (
+    <span className={`inline-flex rounded-full px-3 py-1 text-xs font-bold ring-1 ${classes[priority]}`}>
+      {formatPriority(priority)}
+    </span>
+  );
+}
+
+function StatusBadge({ status }: { status: RiskCaseStatus }) {
+  const classes: Record<RiskCaseStatus, string> = {
+    PENDIENTE: 'bg-amber-50 text-amber-700 ring-amber-100',
+    EN_REVISION: 'bg-blue-50 text-blue-700 ring-blue-100',
+    RESUELTO: 'bg-emerald-50 text-emerald-700 ring-emerald-100',
+  };
+
+  return (
+    <span className={`inline-flex rounded-full px-3 py-1 text-xs font-bold ring-1 ${classes[status]}`}>
+      {formatCaseStatus(status)}
+    </span>
+  );
+}
+
+function CaseActionLink({
+  riskCase,
+  onOpenDetail,
+}: {
+  riskCase: ApiRiskCase;
+  onOpenDetail: (riskCase: ApiRiskCase) => void;
+}) {
+  if (riskCase.status === 'RESUELTO') {
+    return (
+      <button
+        type="button"
+        className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-bold text-slate-700 hover:border-blue-200 hover:bg-blue-50 hover:text-blue-700"
+        onClick={() => onOpenDetail(riskCase)}
+      >
+        Abrir caso
+      </button>
+    );
+  }
+
+  return (
+    <Link
+      to={`/case-management?transactionId=${riskCase.transactionId}`}
+      className="rounded-xl bg-blue-700 px-3 py-2 text-xs font-bold text-white hover:bg-blue-800"
+    >
+      Abrir caso
+    </Link>
+  );
+}
+
 function LoadingRows() {
   return (
     <div className="mt-5 space-y-3">
@@ -369,115 +527,144 @@ function CaseDetail({
   onClose: () => void;
 }) {
   return (
-    <div className="fixed inset-0 z-50 bg-slate-950/35 p-4 backdrop-blur-sm">
-      <section className="ml-auto flex h-full w-full max-w-xl flex-col overflow-hidden rounded-[28px] bg-white shadow-2xl">
-        <div className="border-b border-slate-200 p-5">
-          <div className="flex items-start justify-between gap-4">
-            <div>
-              <p className="text-xs font-bold uppercase tracking-[0.18em] text-blue-700">
-                Detalle del caso
-              </p>
-              <h2 className="mt-2 text-2xl font-bold text-slate-950">
-                Caso #{riskCase.id}
-              </h2>
-            </div>
-            <button
-              type="button"
-              onClick={onClose}
-              className="rounded-2xl border border-slate-200 px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50"
-            >
-              Cerrar
-            </button>
-          </div>
-        </div>
-        <dl className="flex-1 overflow-y-auto divide-y divide-slate-200 p-5">
-          <DetailRow label="Transaccion" value={`#${riskCase.transactionId}`} />
-          <DetailRow label="Riesgo" value={riskCase.riskLevelSnapshot} />
-          <DetailRow label="Score" value={String(riskCase.scoreSnapshot)} />
-          <DetailRow label="Prioridad" value={formatPriority(riskCase.priority)} />
-          <DetailRow label="Estado" value={formatCaseStatus(riskCase.status)} />
-          <DetailRow
-            label="Resultado"
-            value={formatReviewResult(riskCase.reviewResult)}
+    <DetailPanel
+      icon={<FiBriefcase className="h-5 w-5" aria-hidden="true" />}
+      eyebrow="Detalle del caso"
+      title={`Caso #${riskCase.id}`}
+      badge={
+        <DetailBadge tone={getCaseDetailTone(riskCase.status)}>
+          {formatCaseStatus(riskCase.status)}
+        </DetailBadge>
+      }
+      meta={`${getTransactionLabel(riskCase)} · Actualizado ${formatDate(riskCase.updatedAt)}`}
+      onClose={onClose}
+      footer={
+        <Link
+          to={`/case-management?transactionId=${riskCase.transactionId}`}
+          className="rounded-xl bg-blue-700 px-4 py-2.5 text-sm font-semibold text-white hover:bg-blue-800"
+        >
+          {riskCase.status === 'RESUELTO' ? 'Ver cierre' : 'Gestionar caso'}
+        </Link>
+      }
+    >
+      <DetailSection title="Resumen" tone={getCaseDetailTone(riskCase.status)}>
+        <DetailGrid>
+          <DetailField
+            label="Transacción"
+            value={getTransactionLabel(riskCase)}
           />
-          <DetailRow
+          <DetailField
+            label="Estado"
+            value={formatCaseStatus(riskCase.status)}
+          />
+          <DetailField
+            label="Riesgo"
+            value={formatRisk(riskCase.riskLevelSnapshot)}
+          />
+          <DetailField label="Score" value={`${riskCase.scoreSnapshot}/100`} />
+          <DetailField
+            label="Prioridad"
+            value={formatPriority(riskCase.priority)}
+          />
+          <DetailField label="Resultado" value={getResultLabel(riskCase)} />
+        </DetailGrid>
+      </DetailSection>
+
+      <DetailSection title="Identificación">
+        <DetailGrid>
+          <DetailField label="Caso" value={`#${riskCase.id}`} />
+          <DetailField
             label="Responsable"
-            value={riskCase.responsibleName ?? 'No disponible'}
+            value={getResponsibleName(riskCase)}
           />
-          <DetailRow
-            label="Observaciones"
-            value={riskCase.observations ?? 'No disponible'}
-          />
-          <DetailRow
-            label="Accion realizada"
-            value={riskCase.actionTaken ?? 'No disponible'}
-          />
-          <DetailRow
-            label="Comentarios internos"
-            value={riskCase.internalComments ?? 'No disponible'}
-          />
-          <DetailRow
-            label="Motivo clasificacion"
-            value={riskCase.classificationReason ?? 'No disponible'}
-          />
-          <DetailRow label="Creado" value={formatDate(riskCase.createdAt)} />
-          <DetailRow
+          <DetailField label="Creado" value={formatDate(riskCase.createdAt)} />
+          <DetailField
             label="Actualizado"
             value={formatDate(riskCase.updatedAt)}
           />
-          {riskCase.timelineEvents?.length ? (
-            <div className="py-4">
-              <dt className="text-sm text-slate-500">Timeline</dt>
-              <dd className="mt-3 space-y-3">
-                {riskCase.timelineEvents.map((event) => (
-                  <div
-                    key={event.id}
-                    className="border-l-2 border-blue-200 pl-3 text-sm"
-                  >
-                    <p className="font-semibold text-slate-950">
-                      {event.description}
-                    </p>
-                    <p className="mt-1 text-xs text-slate-500">
-                      {formatDate(event.createdAt)} ·{' '}
-                      {event.user?.name ?? 'Sistema'}
-                    </p>
-                  </div>
-                ))}
-              </dd>
-            </div>
-          ) : null}
-        </dl>
-      </section>
-    </div>
+        </DetailGrid>
+      </DetailSection>
+
+      <DetailSection title="Información operacional">
+        <DetailGrid>
+          <DetailField
+            label="Análisis y antecedentes"
+            value={riskCase.observations ?? 'No disponible'}
+            wide
+          />
+          <DetailField
+            label="Gestión realizada"
+            value={riskCase.actionTaken ?? 'No disponible'}
+            wide
+          />
+          <DetailField
+            label="Motivo de clasificación"
+            value={riskCase.classificationReason ?? 'No disponible'}
+            wide
+          />
+          <DetailField
+            label="Comentarios internos"
+            value={riskCase.internalComments ?? 'No disponible'}
+            wide
+          />
+        </DetailGrid>
+      </DetailSection>
+
+      <DetailSection title="Detalle completo o trazabilidad">
+        {riskCase.timelineEvents?.length ? (
+          <ol className="space-y-3">
+            {riskCase.timelineEvents.map((event) => (
+              <li key={event.id} className="border-l-2 border-blue-200 pl-3">
+                <p className="break-words text-sm font-semibold text-slate-950">
+                  {event.description}
+                </p>
+                <p className="mt-1 text-xs text-slate-500">
+                  {formatDate(event.createdAt)} ·{' '}
+                  {event.user?.name ?? 'Sistema'}
+                </p>
+              </li>
+            ))}
+          </ol>
+        ) : (
+          <DetailNote>Este caso aún no registra eventos de trazabilidad.</DetailNote>
+        )}
+      </DetailSection>
+    </DetailPanel>
   );
 }
 
-function DetailRow({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="grid gap-1 py-3 sm:grid-cols-[160px_minmax(0,1fr)]">
-      <dt className="text-sm text-slate-500">{label}</dt>
-      <dd className="break-words text-sm font-semibold text-slate-950">
-        {value}
-      </dd>
-    </div>
-  );
+function getCaseDetailTone(status: RiskCaseStatus) {
+  if (status === 'RESUELTO') return 'emerald' as const;
+  if (status === 'EN_REVISION') return 'blue' as const;
+  return 'amber' as const;
 }
 
 function formatCaseStatus(value?: string | null) {
   const labels: Record<string, string> = {
     PENDIENTE: 'Pendiente',
-    EN_REVISION: 'En revision',
+    EN_REVISION: 'En revisión',
     RESUELTO: 'Resuelto',
   };
 
   return value ? labels[value] ?? value : 'No disponible';
 }
 
+function getResultLabel(riskCase: ApiRiskCase) {
+  if (
+    (riskCase.status === 'PENDIENTE' || riskCase.status === 'EN_REVISION') &&
+    !riskCase.reviewResult
+  ) {
+    return 'Sin resultado';
+  }
+
+  return formatReviewResult(riskCase.reviewResult);
+}
+
 function formatReviewResult(value?: string | null) {
   const labels: Record<string, string> = {
     REQUIERE_ANTECEDENTES: 'Requiere antecedentes',
     SOSPECHA_DESCARTADA: 'Sospecha descartada',
-    OPERACION_SOSPECHOSA: 'Operacion sospechosa',
+    OPERACION_SOSPECHOSA: 'Operación sospechosa',
   };
 
   return value ? labels[value] ?? value : 'No disponible';
@@ -491,6 +678,29 @@ function formatPriority(value?: string | null) {
   };
 
   return value ? labels[value] ?? value : 'No disponible';
+}
+
+function formatRisk(value?: string | null) {
+  const labels: Record<string, string> = {
+    ALTO: 'Alto',
+    MEDIO: 'Medio',
+    BAJO: 'Bajo',
+  };
+
+  return value ? labels[value.toUpperCase()] ?? value : 'No disponible';
+}
+
+function getTransactionLabel(riskCase: ApiRiskCase) {
+  return riskCase.transaction?.transactionCode ?? `#${riskCase.transactionId}`;
+}
+
+function getResponsibleName(riskCase: ApiRiskCase) {
+  return (
+    riskCase.responsibleUser?.name ??
+    riskCase.responsibleUser?.email ??
+    riskCase.responsibleName ??
+    'Sin asignar'
+  );
 }
 
 function getPriorityWeight(value?: string | null) {

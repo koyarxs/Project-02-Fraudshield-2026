@@ -12,7 +12,9 @@ describe('ProcessingBatchController', () => {
       providers: [ProcessingBatchService, PrismaService],
     }).compile();
 
-    controller = module.get<ProcessingBatchController>(ProcessingBatchController);
+    controller = module.get<ProcessingBatchController>(
+      ProcessingBatchController,
+    );
   });
 
   it('should be defined', () => {

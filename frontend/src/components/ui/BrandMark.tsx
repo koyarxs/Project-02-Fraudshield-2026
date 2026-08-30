@@ -39,7 +39,7 @@ export default function BrandMark({
       <img
         src={logoSrc}
         alt="FraudShield"
-        className={`shrink-0 object-contain ${plainSizeClasses[size]} ${className}`}
+        className={`max-w-full shrink-0 object-contain ${plainSizeClasses[size]} ${className}`}
       />
     );
   }

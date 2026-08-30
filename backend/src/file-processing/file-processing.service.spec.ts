@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-unsafe-assignment */
 import { Test, TestingModule } from '@nestjs/testing';
 import { readFileSync } from 'fs';
 import { join } from 'path';
@@ -39,11 +40,13 @@ describe('FileProcessingService', () => {
         update: jest.fn().mockResolvedValue({ id: 10 }),
       },
       riskResult: {
-        findMany: jest.fn().mockResolvedValue([
-          { riskLevel: { name: 'ALTO' } },
-          { riskLevel: { name: 'MEDIO' } },
-          { riskLevel: { name: 'BAJO' } },
-        ]),
+        findMany: jest
+          .fn()
+          .mockResolvedValue([
+            { riskLevel: { name: 'ALTO' } },
+            { riskLevel: { name: 'MEDIO' } },
+            { riskLevel: { name: 'BAJO' } },
+          ]),
       },
       dashboardMetric: {
         create: jest.fn().mockResolvedValue({

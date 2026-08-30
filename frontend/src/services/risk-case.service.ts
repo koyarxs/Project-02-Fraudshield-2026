@@ -42,6 +42,7 @@ class RiskCaseService {
 
     return response.data;
   }
+
 }
 
 export default new RiskCaseService();

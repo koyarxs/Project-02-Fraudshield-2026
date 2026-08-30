@@ -11,8 +11,6 @@ import {
   YAxis,
 } from 'recharts';
 import {
-  FiArrowDown,
-  FiArrowUp,
   FiBarChart2,
   FiDownload,
   FiEye,
@@ -31,14 +29,11 @@ import type {
 } from '../types/transaction';
 import type { RiskLevel } from '../types/processing';
 import { exportRowsToCsv } from '../utils/exportCsv';
-import {
-  formatCurrencyCLP,
-  formatDate,
-  formatNumber,
-} from '../utils/formatDate';
+import { formatDate, formatNumber } from '../utils/formatDate';
 
 type RiskFilter = RiskLevel | 'Todos';
 type SortMode = 'score-desc' | 'score-asc';
+type BatchStatus = 'completed' | 'unknown';
 
 interface RiskMetrics {
   total: number;
@@ -49,6 +44,7 @@ interface RiskMetrics {
 }
 
 const PAGE_SIZE = 8;
+const INITIAL_BATCH_LIMIT = 6;
 
 const riskBadgeClasses: Record<RiskLevel, string> = {
   Alto: 'bg-red-50 text-red-700 ring-red-100',
@@ -70,7 +66,11 @@ const actionByRisk: Record<RiskLevel, string> = {
 
 export default function Results() {
   const [searchParams] = useSearchParams();
+  const requestedBatchIdParam = searchParams.get('batchId');
   const [batches, setBatches] = useState<HistoryRecord[]>([]);
+  const [selectedBatchId, setSelectedBatchId] = useState<number | null>(null);
+  const [batchQuery, setBatchQuery] = useState('');
+  const [showAllBatches, setShowAllBatches] = useState(false);
   const [transactions, setTransactions] = useState<ApiTransaction[]>([]);
   const [selectedTransaction, setSelectedTransaction] =
     useState<ApiTransaction | null>(null);
@@ -95,7 +95,32 @@ export default function Results() {
         const response = await historyService.findAll();
 
         if (!shouldIgnore) {
-          setBatches(response.filter((batch) => hasProcessedResults(batch)));
+          const completedBatches = response.filter(isCompletedBatch);
+          const requestedBatchId = Number(requestedBatchIdParam);
+          const requestedBatch =
+            Number.isFinite(requestedBatchId) && requestedBatchId > 0
+              ? completedBatches.find(
+                  (batch) => batch.batchId === requestedBatchId,
+                )
+              : null;
+
+          setBatches(completedBatches);
+          setSelectedBatchId(
+            (current) => {
+              if (requestedBatch) {
+                return requestedBatch.batchId;
+              }
+
+              if (
+                current &&
+                completedBatches.some((batch) => batch.batchId === current)
+              ) {
+                return current;
+              }
+
+              return completedBatches[0]?.batchId ?? null;
+            },
+          );
         }
       } catch {
         if (!shouldIgnore) {
@@ -114,14 +139,10 @@ export default function Results() {
     return () => {
       shouldIgnore = true;
     };
-  }, []);
+  }, [requestedBatchIdParam]);
 
-  const requestedBatchId = Number(searchParams.get('batchId'));
   const selectedBatch =
-    Number.isFinite(requestedBatchId) && requestedBatchId > 0
-      ? batches.find((batch) => batch.batchId === requestedBatchId) ?? null
-      : batches[0] ?? null;
-  const selectedBatchId = selectedBatch?.batchId;
+    batches.find((batch) => batch.batchId === selectedBatchId) ?? null;
 
   useEffect(() => {
     let shouldIgnore = false;
@@ -195,13 +216,9 @@ export default function Results() {
         const matchesRisk =
           riskFilter === 'Todos' || riskLevel === riskFilter;
         const searchable = [
-          transaction.id,
           transaction.transactionCode,
           transaction.customerCode,
-          transaction.originLocation,
-          transaction.destinationLocation,
           transaction.riskResult?.observation,
-          transaction.batchId,
           getActivatedRulesLabel(transaction),
         ]
           .join(' ')
@@ -257,6 +274,16 @@ export default function Results() {
     );
   };
 
+  const handleSelectBatch = (batchId: number) => {
+    setSelectedBatchId(batchId);
+    setSelectedTransaction(null);
+    setRiskFilter('Todos');
+    setSortMode('score-desc');
+    setQuery('');
+    setCurrentPage(1);
+    setExportMessage('');
+  };
+
   return (
     <DashboardLayout>
       {isLoading ? (
@@ -267,15 +294,20 @@ export default function Results() {
         <EmptyState />
       ) : (
         <div className="space-y-4">
-          <section className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_360px]">
-            <BatchSummaryCard
-              batch={selectedBatch}
-              metrics={metrics}
-              exportMessage={exportMessage}
-              onExport={handleExport}
-            />
-            <RiskDistributionCard data={chartData} />
-          </section>
+          <HeroCard
+            exportMessage={exportMessage}
+            onExport={handleExport}
+          />
+
+          <BatchSelector
+            batches={batches}
+            selectedBatchId={selectedBatch.batchId}
+            query={batchQuery}
+            showAll={showAllBatches}
+            onQueryChange={setBatchQuery}
+            onSelect={handleSelectBatch}
+            onShowAll={() => setShowAllBatches(true)}
+          />
 
           <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-5">
             <SummaryCard label="Total procesadas" value={metrics.total} />
@@ -304,15 +336,17 @@ export default function Results() {
             />
           </section>
 
-          <section className="grid gap-4 2xl:grid-cols-[minmax(0,1fr)_420px]">
-            <div className="app-card rounded-[24px] p-5 lg:p-6">
-              <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
-                <div>
+          <section className="grid min-w-0 gap-4 lg:grid-cols-[minmax(0,0.35fr)_minmax(0,0.65fr)]">
+            <RiskDistributionCard data={chartData} />
+
+            <div className="app-card min-w-0 rounded-[24px] p-5 lg:p-6">
+              <div className="flex min-w-0 flex-col gap-4">
+                <div className="min-w-0">
                   <p className="text-xs font-bold uppercase tracking-[0.16em] text-blue-700">
-                    Tabla de resultados
+                    Transacciones del lote
                   </p>
-                  <h2 className="mt-1 text-xl font-bold text-slate-950">
-                    Transacciones clasificadas por FraudShield
+                  <h2 className="mt-1 max-w-2xl text-lg font-bold leading-snug text-slate-950 xl:text-xl">
+                    Selecciona una transacción para explicar
                   </h2>
                 </div>
                 <ResultsFilters
@@ -331,7 +365,7 @@ export default function Results() {
                 <Message tone="warning">{detailError}</Message>
               ) : transactions.length > 0 ? (
                 <>
-                  <TransactionTable
+                  <TransactionSelector
                     transactions={pagedTransactions}
                     selectedTransactionId={selectedTransaction?.id}
                     onSelect={setSelectedTransaction}
@@ -359,29 +393,26 @@ export default function Results() {
   );
 }
 
-function BatchSummaryCard({
-  batch,
-  metrics,
+function HeroCard({
   exportMessage,
   onExport,
 }: {
-  batch: HistoryRecord;
-  metrics: RiskMetrics;
   exportMessage: string;
   onExport: () => void;
 }) {
   return (
-    <section className="app-card rounded-[24px] p-5 lg:p-6">
+    <section className="module-sticky-header app-card min-w-0 rounded-[24px] p-5 lg:p-6">
       <div className="flex flex-col gap-5 lg:flex-row lg:items-start lg:justify-between">
         <div>
-          <p className="text-xs font-bold uppercase tracking-[0.16em] text-blue-700">
-            Resumen del lote
+          <p className="text-sm font-semibold uppercase tracking-[0.16em] text-blue-700">
+            Resultados
           </p>
-          <h1 className="mt-2 break-all text-2xl font-bold text-slate-950">
-            {batch.fileName}
+          <h1 className="mt-2 text-3xl font-bold text-slate-950">
+            Resultados del análisis
           </h1>
-          <p className="mt-2 text-sm leading-6 text-slate-600">
-            Resultados calculados con datos reales persistidos en PostgreSQL.
+          <p className="mt-2 max-w-3xl text-sm leading-6 text-slate-600">
+            Consulta la clasificación, distribución del riesgo y explicación
+            de las reglas aplicadas.
           </p>
         </div>
         <button
@@ -390,31 +421,135 @@ function BatchSummaryCard({
           className="inline-flex items-center justify-center gap-2 rounded-2xl bg-slate-950 px-5 py-3 text-sm font-semibold text-white shadow-lg shadow-slate-900/15 transition hover:-translate-y-0.5 hover:bg-slate-800"
         >
           <FiDownload className="h-4 w-4" aria-hidden="true" />
-          Exportar CSV
+          Exportar resultados del lote
         </button>
-      </div>
-
-      <div className="mt-5 grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
-        <BatchFact label="ID del lote" value={`#${batch.batchId}`} />
-        <BatchFact label="Archivo" value={batch.fileName} />
-        <BatchFact
-          label="Fecha"
-          value={formatDate(batch.uploadedAt)}
-        />
-        <BatchFact
-          label="Transacciones"
-          value={formatNumber(metrics.total)}
-        />
-        <BatchFact
-          label="Estado"
-          value={batch.status ?? 'No disponible'}
-        />
       </div>
 
       {exportMessage && (
         <p className="mt-4 rounded-2xl bg-blue-50 px-4 py-3 text-sm font-medium text-blue-800">
           {exportMessage}
         </p>
+      )}
+    </section>
+  );
+}
+
+function BatchSelector({
+  batches,
+  selectedBatchId,
+  query,
+  showAll,
+  onQueryChange,
+  onSelect,
+  onShowAll,
+}: {
+  batches: HistoryRecord[];
+  selectedBatchId?: number;
+  query: string;
+  showAll: boolean;
+  onQueryChange: (query: string) => void;
+  onSelect: (batchId: number) => void;
+  onShowAll: () => void;
+}) {
+  const normalizedQuery = query.trim().toLowerCase();
+  const filteredBatches = batches.filter((batch) =>
+    [
+      batch.batchId,
+      batch.fileName,
+      formatDate(batch.uploadedAt),
+      formatNumber(batch.totalRecords ?? 0),
+      getBatchStatusLabel(batch.status),
+    ]
+      .join(' ')
+      .toLowerCase()
+      .includes(normalizedQuery),
+  );
+  const visibleBatches = showAll
+    ? filteredBatches
+    : filteredBatches.slice(0, INITIAL_BATCH_LIMIT);
+  const hasHiddenBatches = filteredBatches.length > visibleBatches.length;
+
+  return (
+    <section className="app-card rounded-[24px] p-5 lg:p-6">
+      <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
+        <div>
+          <p className="text-xs font-bold uppercase tracking-[0.16em] text-blue-700">
+            Lote completado
+          </p>
+          <h2 className="mt-1 text-xl font-bold text-slate-950">
+            Selecciona el lote a analizar
+          </h2>
+        </div>
+        <span className="text-sm font-semibold text-slate-500">
+          {formatNumber(batches.length)} lote(s) completado(s)
+        </span>
+      </div>
+
+      <label className="relative mt-5 block">
+        <FiSearch
+          className="pointer-events-none absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400"
+          aria-hidden="true"
+        />
+        <input
+          value={query}
+          onChange={(event) => onQueryChange(event.target.value)}
+          placeholder="Buscar lote o archivo"
+          className="h-11 w-full rounded-2xl border border-slate-300 bg-white pl-11 pr-4 text-sm outline-none focus:border-blue-500 focus:ring-4 focus:ring-blue-100"
+        />
+      </label>
+
+      <div className="mt-4 space-y-2">
+        {visibleBatches.map((batch) => {
+          const isSelected = batch.batchId === selectedBatchId;
+
+          return (
+            <button
+              key={batch.batchId}
+              type="button"
+              onClick={() => onSelect(batch.batchId)}
+              className={[
+                'grid w-full grid-cols-1 gap-3 rounded-2xl border px-4 py-3 text-left transition focus:outline-none focus-visible:ring-4 focus-visible:ring-blue-100 md:grid-cols-[minmax(0,180px)_minmax(150px,1fr)_minmax(150px,1fr)_minmax(110px,1fr)] md:items-center',
+                isSelected
+                  ? 'border-blue-500 bg-blue-50 shadow-xl shadow-blue-100'
+                  : 'border-slate-200 bg-white hover:-translate-y-0.5 hover:border-blue-200 hover:shadow-lg hover:shadow-slate-200/70',
+              ].join(' ')}
+            >
+              <div className="min-w-0">
+                <p className="text-xs font-bold uppercase tracking-[0.14em] text-blue-700">
+                  Lote #{batch.batchId}
+                </p>
+                <h3 className="mt-1 truncate text-sm font-bold text-slate-950">
+                  {batch.fileName}
+                </h3>
+              </div>
+              <span className="text-sm font-medium text-slate-600 sm:text-left lg:text-center">
+                {formatDate(batch.uploadedAt)}
+              </span>
+              <span className="text-sm font-medium text-slate-600 md:text-center">
+                {formatNumber(batch.totalRecords ?? 0)} transacciones
+              </span>
+              <span className="md:justify-self-center">
+                <BatchStatusBadge status={batch.status} />
+              </span>
+            </button>
+          );
+        })}
+      </div>
+
+      {filteredBatches.length === 0 && (
+        <div className="mt-4 rounded-2xl border border-dashed border-slate-300 bg-slate-50 px-5 py-8 text-center text-sm font-medium text-slate-500">
+          No hay lotes completados que coincidan con la búsqueda.
+        </div>
+      )}
+
+      {hasHiddenBatches && (
+        <button
+          type="button"
+          onClick={onShowAll}
+          className="mt-4 rounded-2xl border border-slate-300 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 transition hover:-translate-y-0.5 hover:bg-slate-50"
+        >
+          Ver todos los lotes
+        </button>
       )}
     </section>
   );
@@ -490,8 +625,8 @@ function ResultsFilters({
   onSortModeChange: (value: SortMode) => void;
 }) {
   return (
-    <div className="grid gap-3 sm:grid-cols-[minmax(220px,1fr)_160px_170px] lg:min-w-[620px]">
-      <label className="relative block">
+    <div className="grid min-w-0 gap-3 sm:grid-cols-[minmax(0,1fr)_140px_150px]">
+      <label className="relative block min-w-0">
         <FiSearch
           className="pointer-events-none absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400"
           aria-hidden="true"
@@ -500,7 +635,7 @@ function ResultsFilters({
           value={query}
           onChange={(event) => onQueryChange(event.target.value)}
           placeholder="Buscar código, cliente o regla"
-          className="w-full rounded-2xl border border-slate-300 py-2.5 pl-11 pr-4 text-sm outline-none focus:border-blue-500 focus:ring-4 focus:ring-blue-100"
+          className="w-full min-w-0 rounded-2xl border border-slate-300 py-2.5 pl-11 pr-4 text-sm outline-none focus:border-blue-500 focus:ring-4 focus:ring-blue-100"
         />
       </label>
       <select
@@ -508,7 +643,7 @@ function ResultsFilters({
         onChange={(event) =>
           onRiskFilterChange(event.target.value as RiskFilter)
         }
-        className="rounded-2xl border border-slate-300 px-4 py-2.5 text-sm font-semibold outline-none focus:border-blue-500 focus:ring-4 focus:ring-blue-100"
+        className="min-w-0 rounded-2xl border border-slate-300 px-3 py-2.5 text-sm font-semibold outline-none focus:border-blue-500 focus:ring-4 focus:ring-blue-100"
       >
         <option>Todos</option>
         <option>Bajo</option>
@@ -518,7 +653,7 @@ function ResultsFilters({
       <select
         value={sortMode}
         onChange={(event) => onSortModeChange(event.target.value as SortMode)}
-        className="rounded-2xl border border-slate-300 px-4 py-2.5 text-sm font-semibold outline-none focus:border-blue-500 focus:ring-4 focus:ring-blue-100"
+        className="min-w-0 rounded-2xl border border-slate-300 px-3 py-2.5 text-sm font-semibold outline-none focus:border-blue-500 focus:ring-4 focus:ring-blue-100"
       >
         <option value="score-desc">Score mayor</option>
         <option value="score-asc">Score menor</option>
@@ -527,7 +662,7 @@ function ResultsFilters({
   );
 }
 
-function TransactionTable({
+function TransactionSelector({
   transactions,
   selectedTransactionId,
   onSelect,
@@ -545,30 +680,15 @@ function TransactionTable({
   }
 
   return (
-    <div className="mt-5 overflow-x-auto">
-      <table className="min-w-full divide-y divide-slate-200">
+    <div className="mt-5 min-w-0 overflow-hidden rounded-2xl border border-slate-200">
+      <table className="w-full table-fixed divide-y divide-slate-200">
         <thead>
           <tr>
-            {[
-              'ID',
-              'Código',
-              'Cliente',
-              'Monto',
-              'Fecha',
-              'Origen',
-              'Destino',
-              'Riesgo',
-              'Score',
-              'Reglas activadas',
-              'Acción',
-            ].map((column) => (
-              <th
-                key={column}
-                className="whitespace-nowrap px-3 py-2.5 text-left text-xs font-bold uppercase tracking-[0.12em] text-slate-500 first:pl-0"
-              >
-                {column}
-              </th>
-            ))}
+            <TableHeader className="w-[26%] pl-4">Código</TableHeader>
+            <TableHeader className="w-[22%]">Cliente</TableHeader>
+            <TableHeader className="w-[18%]">Riesgo</TableHeader>
+            <TableHeader className="w-[12%]">Score</TableHeader>
+            <TableHeader className="w-[22%]">Acción</TableHeader>
           </tr>
         </thead>
         <tbody className="divide-y divide-slate-100">
@@ -582,31 +702,16 @@ function TransactionTable({
               <tr
                 key={transaction.id}
                 className={`align-top transition hover:bg-slate-50 ${
-                  isSelected ? 'bg-blue-50/60' : ''
+                  isSelected ? 'bg-blue-50/80 ring-1 ring-inset ring-blue-200' : ''
                 }`}
               >
-                <td className="whitespace-nowrap px-3 py-2.5 pl-0 text-sm font-semibold text-slate-900">
-                  #{transaction.id}
-                </td>
-                <td className="whitespace-nowrap px-3 py-2.5 text-sm text-slate-700">
+                <td className="truncate px-3 py-2.5 pl-4 text-sm font-semibold text-slate-900">
                   {fallback(transaction.transactionCode)}
                 </td>
-                <td className="whitespace-nowrap px-3 py-2.5 text-sm text-slate-700">
+                <td className="truncate px-3 py-2.5 text-sm text-slate-700">
                   {fallback(transaction.customerCode)}
                 </td>
-                <td className="whitespace-nowrap px-3 py-2.5 text-sm font-semibold text-slate-900">
-                  {formatCurrencyCLP(transaction.amount)}
-                </td>
-                <td className="whitespace-nowrap px-3 py-2.5 text-sm text-slate-700">
-                  {formatTransactionDateTime(transaction)}
-                </td>
-                <td className="whitespace-nowrap px-3 py-2.5 text-sm text-slate-700">
-                  {fallback(transaction.originLocation)}
-                </td>
-                <td className="whitespace-nowrap px-3 py-2.5 text-sm text-slate-700">
-                  {fallback(transaction.destinationLocation)}
-                </td>
-                <td className="whitespace-nowrap px-3 py-2.5">
+                <td className="px-3 py-2.5">
                   {riskLevel ? (
                     <RiskBadge level={riskLevel} />
                   ) : (
@@ -615,24 +720,18 @@ function TransactionTable({
                     </span>
                   )}
                 </td>
-                <td className="whitespace-nowrap px-3 py-2.5 text-sm font-bold text-slate-900">
+                <td className="px-3 py-2.5 text-sm font-bold text-slate-900">
                   {transaction.riskResult?.score ?? 'N/D'}
                 </td>
-                <td className="min-w-40 px-3 py-2.5 text-sm text-slate-700">
-                  {getActivatedRulesLabel(transaction)}
-                </td>
-                <td className="whitespace-nowrap px-3 py-2.5">
-                  <div className="flex items-center gap-2">
-                    <button
-                      type="button"
-                      onClick={() => onSelect(transaction)}
-                      className="inline-flex items-center gap-1 rounded-xl border border-slate-200 px-3 py-2 text-xs font-bold text-slate-700 transition hover:border-blue-200 hover:bg-blue-50 hover:text-blue-700"
-                    >
-                      <FiEye className="h-3.5 w-3.5" aria-hidden="true" />
-                      Detalle
-                    </button>
-                    <CaseAction transaction={transaction} riskLevel={riskLevel} />
-                  </div>
+                <td className="px-3 py-2.5">
+                  <button
+                    type="button"
+                    onClick={() => onSelect(transaction)}
+                    className="inline-flex items-center justify-center gap-1 rounded-xl border border-slate-200 px-2.5 py-2 text-xs font-bold text-slate-700 transition hover:border-blue-200 hover:bg-blue-50 hover:text-blue-700"
+                  >
+                    <FiEye className="h-3.5 w-3.5" aria-hidden="true" />
+                    Analizar
+                  </button>
                 </td>
               </tr>
             );
@@ -643,6 +742,22 @@ function TransactionTable({
   );
 }
 
+function TableHeader({
+  children,
+  className = '',
+}: {
+  children: ReactNode;
+  className?: string;
+}) {
+  return (
+    <th
+      className={`px-3 py-2.5 text-left text-xs font-bold uppercase tracking-[0.12em] text-slate-500 ${className}`}
+    >
+      {children}
+    </th>
+  );
+}
+
 function TransactionDetailPanel({
   transaction,
 }: {
@@ -650,7 +765,7 @@ function TransactionDetailPanel({
 }) {
   if (!transaction) {
     return (
-      <aside className="app-card rounded-[24px] p-5 lg:p-6">
+      <aside className="app-card min-w-0 rounded-[24px] p-5 lg:col-span-2 lg:p-6">
         <div className="rounded-2xl border border-dashed border-slate-300 bg-slate-50 px-5 py-10 text-center">
           <FiFileText className="mx-auto h-8 w-8 text-slate-400" aria-hidden="true" />
           <h3 className="mt-3 text-lg font-bold text-slate-950">
@@ -668,44 +783,55 @@ function TransactionDetailPanel({
   const riskLevel = normalizeRiskLevel(transaction.riskResult?.riskLevel?.name);
   const rules = getRulesForDetail(transaction);
   const activatedRules = rules.filter((rule) => rule.activated);
+  const mainReason =
+    transaction.riskResult?.ruleDetails?.finalReason ??
+    transaction.riskResult?.observation ??
+    'Sin explicación disponible desde la API.';
 
   return (
-    <aside className="app-card rounded-[24px] p-5 lg:p-6">
+    <aside className="app-card min-w-0 rounded-[24px] p-5 lg:col-span-2 lg:p-6">
       <div className="flex items-start justify-between gap-3">
         <div>
           <p className="text-xs font-bold uppercase tracking-[0.16em] text-blue-700">
             Explicabilidad
           </p>
           <h2 className="mt-1 text-xl font-bold text-slate-950">
-            ¿Por qué esta transacción fue clasificada así?
+            Explicación de {fallback(transaction.transactionCode)}
           </h2>
+          <p className="mt-1 text-sm text-slate-500">
+            {formatTransactionDateTime(transaction)}
+          </p>
         </div>
         {riskLevel && <RiskBadge level={riskLevel} />}
       </div>
 
-      <div className="mt-5 grid gap-3 sm:grid-cols-3 2xl:grid-cols-1">
-        <MiniMetric label="Score" value={`${transaction.riskResult?.score ?? 'N/D'}/100`} />
-        <MiniMetric label="Clasificación" value={riskLevel ?? 'No disponible'} />
+      <div className="mt-5 grid min-w-0 gap-3 sm:grid-cols-2 xl:grid-cols-4">
         <MiniMetric
-          label="Plan de acción"
+          label="Score obtenido"
+          value={`${transaction.riskResult?.score ?? 'N/D'}/100`}
+        />
+        <MiniMetric label="Nivel de riesgo" value={riskLevel ?? 'No disponible'} />
+        <MiniMetric
+          label="Reglas activadas"
+          value={getActivatedRulesLabel(transaction)}
+        />
+        <MiniMetric
+          label="Plan de acción recomendado"
           value={riskLevel ? actionByRisk[riskLevel] : 'No disponible'}
         />
       </div>
 
       <div className="mt-5 rounded-2xl border border-slate-200 bg-slate-50 p-4">
         <p className="text-sm font-bold text-slate-950">
-          Resultado del motor
+          Motivo principal
         </p>
         <p className="mt-2 text-sm leading-6 text-slate-600">
-          {transaction.riskResult?.ruleDetails?.finalReason ??
-            transaction.riskResult?.observation ??
-            'Sin explicación disponible desde la API.'}
+          {mainReason}
         </p>
-        {transaction.riskResult?.ruleDetails?.algorithm && (
-          <p className="mt-3 text-xs leading-5 text-slate-500">
-            {transaction.riskResult.ruleDetails.algorithm}
-          </p>
-        )}
+        <p className="mt-3 rounded-xl bg-white px-3 py-2 text-xs font-semibold leading-5 text-slate-600">
+          El nivel se determina según la regla activa de mayor prioridad; los
+          puntajes no se suman.
+        </p>
       </div>
 
       <div className="mt-5">
@@ -718,7 +844,7 @@ function TransactionDetailPanel({
           </span>
         </div>
 
-        <div className="mt-3 space-y-3">
+        <div className="mt-3 grid min-w-0 gap-3 xl:grid-cols-2">
           {rules.length > 0 ? (
             rules.map((rule) => (
               <RuleDetailCard key={rule.code} rule={rule} />
@@ -735,49 +861,131 @@ function TransactionDetailPanel({
 }
 
 function RuleDetailCard({ rule }: { rule: RiskRuleDetail }) {
+  const display = getRuleDisplay(rule);
+
   return (
-    <article
+    <details
+      open={rule.activated}
       className={`rounded-2xl border p-4 ${
         rule.activated
           ? 'border-blue-200 bg-blue-50'
           : 'border-slate-200 bg-white'
       }`}
     >
-      <div className="flex items-start justify-between gap-3">
-        <div>
-          <p className="text-sm font-bold text-slate-950">
-            {rule.code} · {rule.name}
-          </p>
-          <p className="mt-1 text-sm leading-6 text-slate-600">
-            {rule.reason || rule.description}
-          </p>
+      <summary className="cursor-pointer list-none">
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <p className="text-sm font-bold text-slate-950">
+              {rule.code} · {display.name}
+            </p>
+            <p className="mt-1 text-sm leading-6 text-slate-600">
+              {display.description}
+            </p>
+          </div>
+          <span
+            className={`rounded-full px-2.5 py-1 text-xs font-bold ${
+              rule.activated
+                ? 'bg-blue-600 text-white'
+                : 'bg-slate-100 text-slate-500'
+            }`}
+          >
+            {rule.activated ? 'Activada' : 'No activada'}
+          </span>
         </div>
-        <span
-          className={`rounded-full px-2.5 py-1 text-xs font-bold ${
-            rule.activated
-              ? 'bg-blue-600 text-white'
-              : 'bg-slate-100 text-slate-500'
-          }`}
-        >
-          {rule.activated ? 'Activada' : 'No activada'}
-        </span>
+      </summary>
+
+      <div className="mt-3 rounded-2xl border border-white/70 bg-white/80 p-3 text-sm leading-6 text-slate-700">
+        {display.explanation}
       </div>
 
-      <dl className="mt-3 grid gap-2 text-xs text-slate-600 sm:grid-cols-3 2xl:grid-cols-1">
-        <RuleFact label="Condición" value={rule.condition} />
-        <RuleFact label="Valor observado" value={rule.observedValue} />
-        <RuleFact label="Umbral" value={rule.threshold} />
-        <RuleFact
-          label="Aporte al score"
-          value={
-            typeof rule.scoreImpact === 'number'
-              ? `${formatNumber(rule.scoreImpact)} pts`
-              : undefined
-          }
-        />
-      </dl>
-    </article>
+      <details className="mt-3 rounded-2xl border border-slate-200 bg-white px-3 py-2">
+        <summary className="cursor-pointer text-xs font-bold text-slate-600">
+          Ver criterio técnico
+        </summary>
+        <dl className="mt-3 grid gap-2 text-xs text-slate-600">
+          <RuleFact label="Condición" value={rule.condition} />
+          <RuleFact label="Valor observado" value={rule.observedValue} />
+          <RuleFact label="Umbral" value={rule.threshold} />
+          <RuleFact
+            label="Puntaje de referencia"
+            value={
+              typeof rule.scoreImpact === 'number'
+                ? `${formatNumber(rule.scoreImpact)} pts`
+                : undefined
+            }
+          />
+        </dl>
+      </details>
+    </details>
   );
+}
+
+function getRuleDisplay(rule: RiskRuleDetail) {
+  const code = rule.code.toUpperCase();
+  const defaults = {
+    name: rule.name,
+    description: rule.reason || rule.description,
+    explanation: describeCondition(rule),
+  };
+
+  const descriptions: Record<
+    string,
+    { name: string; description: string; explanation: string }
+  > = {
+    R1: {
+      name: 'Monto superior',
+      description: 'Monto superior a $500.000 CLP.',
+      explanation:
+        'La transacción supera el monto definido como señal de revisión.',
+    },
+    R2: {
+      name: 'Horario nocturno',
+      description: 'Transacción realizada entre las 00:00 y las 05:59.',
+      explanation:
+        'La operación ocurrió en una franja horaria de mayor atención.',
+    },
+    R3: {
+      name: 'Frecuencia elevada',
+      description:
+        'El cliente registra varias transacciones cercanas en el tiempo.',
+      explanation:
+        'La actividad reciente del cliente supera el patrón esperado para revisión.',
+    },
+    R4: {
+      name: 'Cambio de ubicación',
+      description:
+        'Cambio de ubicación entre transacciones cercanas del mismo cliente.',
+      explanation:
+        'Se detecta variación de ubicación en operaciones cercanas del mismo cliente.',
+    },
+    R5: {
+      name: 'Sin señales de riesgo relevantes',
+      description:
+        'Se utiliza cuando no se activan R1-R4.',
+      explanation:
+        'La transacción queda en riesgo bajo porque no presenta señales relevantes en las reglas prioritarias.',
+    },
+  };
+
+  return descriptions[code] ?? defaults;
+}
+
+function describeCondition(rule: RiskRuleDetail) {
+  const condition = String(rule.condition ?? '').trim();
+
+  if (condition === 'amount > 500000') {
+    return 'Monto superior a $500.000 CLP.';
+  }
+
+  if (condition === 'hour >= 0 && hour <= 5') {
+    return 'Transacción realizada entre las 00:00 y las 05:59.';
+  }
+
+  if (condition) {
+    return rule.reason || rule.description || condition;
+  }
+
+  return rule.reason || rule.description || 'Criterio no informado por la API.';
 }
 
 function EmptyState() {
@@ -874,19 +1082,6 @@ function SummaryCard({
   );
 }
 
-function BatchFact({ label, value }: { label: string; value: ReactNode }) {
-  return (
-    <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
-      <dt className="text-xs font-bold uppercase tracking-[0.12em] text-slate-500">
-        {label}
-      </dt>
-      <dd className="mt-2 break-words text-sm font-semibold text-slate-900">
-        {value || 'No disponible'}
-      </dd>
-    </div>
-  );
-}
-
 function MiniMetric({ label, value }: { label: string; value: ReactNode }) {
   return (
     <div className="rounded-2xl border border-slate-200 bg-white px-4 py-3">
@@ -933,38 +1128,6 @@ function InfoRiskCard({
   );
 }
 
-function CaseAction({
-  transaction,
-  riskLevel,
-}: {
-  transaction: ApiTransaction;
-  riskLevel: RiskLevel | null;
-}) {
-  if (!riskLevel || riskLevel === 'Bajo') {
-    return (
-      <span className="inline-flex items-center rounded-xl bg-emerald-50 px-3 py-2 text-xs font-bold text-emerald-700">
-        Monitoreo
-      </span>
-    );
-  }
-
-  const existingCase = transaction.riskCases?.[0];
-  const label = existingCase
-    ? 'Ver caso'
-    : riskLevel === 'Medio'
-      ? 'Iniciar revisión'
-      : 'Gestionar caso';
-
-  return (
-    <Link
-      to={`/case-management?transactionId=${transaction.id}`}
-      className="inline-flex items-center rounded-xl bg-slate-950 px-3 py-2 text-xs font-bold text-white transition hover:-translate-y-0.5 hover:bg-slate-800"
-    >
-      {label}
-    </Link>
-  );
-}
-
 function PaginationControls({
   page,
   totalPages,
@@ -989,7 +1152,6 @@ function PaginationControls({
           onClick={() => onPageChange(page - 1)}
           className="inline-flex items-center gap-2 rounded-xl border border-slate-200 px-3 py-2 text-sm font-semibold text-slate-700 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
         >
-          <FiArrowUp className="h-4 w-4" aria-hidden="true" />
           Anterior
         </button>
         <button
@@ -999,7 +1161,6 @@ function PaginationControls({
           className="inline-flex items-center gap-2 rounded-xl border border-slate-200 px-3 py-2 text-sm font-semibold text-slate-700 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
         >
           Siguiente
-          <FiArrowDown className="h-4 w-4" aria-hidden="true" />
         </button>
       </div>
     </div>
@@ -1063,12 +1224,29 @@ function Message({
   );
 }
 
-function hasProcessedResults(batch: HistoryRecord) {
+function isCompletedBatch(batch: HistoryRecord) {
+  return getBatchStatus(batch.status) === 'completed';
+}
+
+function getBatchStatus(value?: string | null): BatchStatus {
+  const normalized = String(value ?? '').trim().toUpperCase();
+
+  return ['COMPLETED', 'COMPLETADO', 'COMPLETE', 'SUCCESS', 'SUCCESSFUL'].includes(
+    normalized,
+  )
+    ? 'completed'
+    : 'unknown';
+}
+
+function getBatchStatusLabel(value?: string | null) {
+  return getBatchStatus(value) === 'completed' ? 'Completado' : fallback(value);
+}
+
+function BatchStatusBadge({ status }: { status?: string | null }) {
   return (
-    (batch.totalRecords ?? 0) > 0 ||
-    (batch.lowRiskCount ?? 0) > 0 ||
-    (batch.mediumRiskCount ?? 0) > 0 ||
-    (batch.highRiskCount ?? 0) > 0
+    <span className="inline-flex w-fit rounded-full bg-emerald-50 px-3 py-1 text-xs font-bold text-emerald-700 ring-1 ring-emerald-100">
+      {getBatchStatusLabel(status)}
+    </span>
   );
 }
 
@@ -1156,11 +1334,36 @@ function fallback(value?: string | null) {
 }
 
 function formatTransactionDateTime(transaction: ApiTransaction) {
-  const date = formatDate(transaction.transactionDate);
+  const date = formatTransactionDate(transaction.transactionDate);
+  const time = formatTransactionHour(transaction.transactionHour);
 
-  return transaction.transactionHour
-    ? `${date} · ${transaction.transactionHour}`
-    : date;
+  return time ? `${date} · ${time}` : date;
+}
+
+function formatTransactionDate(value?: string | null) {
+  const datePart = String(value ?? '').trim().slice(0, 10);
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(datePart);
+
+  if (match) {
+    const [, year, month, day] = match;
+
+    return `${day}-${month}-${year}`;
+  }
+
+  return fallback(value);
+}
+
+function formatTransactionHour(value?: string | null) {
+  const time = String(value ?? '').trim();
+  const match = /^(\d{2}):(\d{2})(?::\d{2})?/.exec(time);
+
+  if (match) {
+    const [, hour, minute] = match;
+
+    return `${hour}:${minute}`;
+  }
+
+  return time;
 }
 
 function mapTransactionToCsvRow(transaction: ApiTransaction) {

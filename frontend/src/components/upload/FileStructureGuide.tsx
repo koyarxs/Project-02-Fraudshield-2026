@@ -1,5 +1,3 @@
-import DownloadTemplateButton from './DownloadTemplateButton';
-
 const requiredColumns = [
   ['transactionCode', 'Código único de la transacción.'],
   ['customerCode', 'Código del cliente o usuario asociado.'],
@@ -17,35 +15,23 @@ const optionalColumns = [
 export default function FileStructureGuide() {
   return (
     <aside className="space-y-4">
-      <div className="app-card rounded-[24px] p-5">
-        <h2 className="text-lg font-bold text-slate-950">
-          Estructura requerida
-        </h2>
-        <p className="mt-2 text-sm leading-6 text-slate-600">
-          El backend actual admite archivos CSV. JSON queda pendiente porque
-          la API no expone soporte para ese formato.
+      <details className="app-card rounded-[24px] p-5">
+        <summary className="cursor-pointer text-lg font-bold text-slate-950 marker:text-blue-600">
+          Ver formato y columnas requeridas
+        </summary>
+        <p className="mt-3 text-sm leading-6 text-slate-600">
+          Formato admitido actualmente: CSV.
         </p>
 
         <ColumnList title="Columnas obligatorias" items={requiredColumns} />
         <ColumnList title="Columnas opcionales" items={optionalColumns} />
-      </div>
-
-      <div className="rounded-[24px] border border-blue-200 bg-blue-50 p-5 shadow-sm">
-        <h2 className="font-bold text-blue-950">Plantilla oficial</h2>
-        <p className="mt-2 text-sm leading-6 text-blue-800">
-          Descarga una plantilla compatible con los nombres reales esperados
-          por el backend.
-        </p>
-        <div className="mt-5">
-          <DownloadTemplateButton />
-        </div>
-      </div>
+      </details>
 
       <div className="rounded-[24px] border border-amber-200 bg-amber-50 p-5">
         <h2 className="font-bold text-amber-950">Recomendaciones</h2>
         <p className="mt-2 text-sm leading-6 text-amber-800">
-          Usa codificación UTF-8, una sola hoja exportada como CSV y montos
-          sin puntos de miles.
+          Utiliza codificación UTF-8, exporta una sola hoja en formato CSV y
+          registra los montos sin símbolos ni separadores de miles.
         </p>
       </div>
     </aside>

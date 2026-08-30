@@ -17,10 +17,17 @@ import {
   FiSearch,
   FiShield,
   FiUser,
-  FiX,
 } from 'react-icons/fi';
 import type { IconType } from 'react-icons';
 import DashboardLayout from '../components/layout/DashboardLayout';
+import {
+  DetailBadge,
+  DetailField,
+  DetailGrid,
+  DetailNote,
+  DetailPanel,
+  DetailSection,
+} from '../components/ui/DetailPanel';
 import auditLogService, {
   type ApiAuditLog,
 } from '../services/audit-log.service';
@@ -54,11 +61,20 @@ const emptyFilters: AuditFilters = {
   query: '',
 };
 
+const PAGE_SIZE_OPTIONS = [10, 20];
+
 const moduleColors: Record<string, string> = {
   AUTH: 'border-slate-200 bg-slate-50 text-slate-700',
   TRANSACTION: 'border-blue-200 bg-blue-50 text-blue-700',
   RISK_CASE: 'border-violet-200 bg-violet-50 text-violet-700',
   CONTROL_LIST: 'border-cyan-200 bg-cyan-50 text-cyan-700',
+};
+
+const moduleLabels: Record<string, string> = {
+  AUTH: 'Autenticación',
+  TRANSACTION: 'Transacciones',
+  CONTROL_LIST: 'Listas de control',
+  RISK_CASE: 'Casos',
 };
 
 const actionColors: Record<string, string> = {
@@ -73,6 +89,22 @@ const actionColors: Record<string, string> = {
   PRIORITY_CHANGED: 'border-amber-200 bg-amber-50 text-amber-700',
   UPSERT_CONTROL_LIST_ENTRY: 'border-cyan-200 bg-cyan-50 text-cyan-700',
   UPDATE_CONTROL_LIST_ENTRY: 'border-cyan-200 bg-cyan-50 text-cyan-700',
+  DELETE_CONTROL_LIST_ENTRY: 'border-red-200 bg-red-50 text-red-700',
+};
+
+const actionLabels: Record<string, string> = {
+  LOGIN_SUCCESS: 'Inicio de sesión',
+  LOGIN_FAILED: 'Inicio de sesión fallido',
+  CLASSIFY_TRANSACTION: 'Clasificación de transacción',
+  UPSERT_RISK_CASE: 'Creación o actualización de caso',
+  UPDATE_RISK_CASE: 'Actualización de caso',
+  STATUS_CHANGED: 'Cambio de estado',
+  CASE_RESOLVED: 'Cierre de caso',
+  CASE_ASSIGNED: 'Asignación de caso',
+  PRIORITY_CHANGED: 'Cambio de prioridad',
+  UPSERT_CONTROL_LIST_ENTRY: 'Creación o actualización de lista de control',
+  UPDATE_CONTROL_LIST_ENTRY: 'Actualización de lista de control',
+  DELETE_CONTROL_LIST_ENTRY: 'Eliminación de lista de control',
 };
 
 const chartColors = ['#2563eb', '#7c3aed', '#06b6d4', '#f59e0b', '#10b981'];
@@ -85,6 +117,8 @@ export default function Audit() {
   const [isLoading, setIsLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [error, setError] = useState('');
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(20);
 
   const loadAudit = async () => {
     setIsRefreshing(true);
@@ -98,7 +132,7 @@ export default function Audit() {
     if (auditResult.status === 'fulfilled') {
       setLogs(auditResult.value);
     } else {
-      setError('No fue posible cargar la auditoria.');
+      setError('No fue posible cargar la auditoría.');
     }
 
     if (casesResult.status === 'fulfilled') {
@@ -147,37 +181,40 @@ export default function Audit() {
   }, [logs]);
 
   const visibleLogs = useMemo(
-    () => filterLogs(logs, filters, riskCaseById),
+    () =>
+      filterLogs(logs, filters, riskCaseById).sort(
+        (first, second) =>
+          new Date(second.createdAt).getTime() -
+          new Date(first.createdAt).getTime(),
+      ),
     [filters, logs, riskCaseById],
   );
 
   const kpis = useMemo(() => {
-    const auditedCases = new Set<number>();
     const activeUsers = new Set<string>();
+    const summaryLogs = visibleLogs.filter((log) => !isLegacyTestEvent(log));
 
-    visibleLogs.forEach((log) => {
-      const entity = getAuditEntity(log, riskCaseById);
-
-      if (entity.caseId) {
-        auditedCases.add(entity.caseId);
+    summaryLogs.forEach((log) => {
+      if (log.user) {
+        activeUsers.add(String(log.user.id));
       }
-
-      activeUsers.add(log.user ? String(log.user.id) : 'system');
     });
 
     return {
-      events: visibleLogs.length,
-      auditedCases: auditedCases.size,
-      statusChanges: visibleLogs.filter(isStatusChange).length,
+      events: summaryLogs.length,
       activeUsers: activeUsers.size,
+      statusChanges: summaryLogs.filter(isStatusChange).length,
+      controlListChanges: summaryLogs.filter(
+        (log) => log.module === 'CONTROL_LIST',
+      ).length,
     };
-  }, [riskCaseById, visibleLogs]);
+  }, [visibleLogs]);
 
   const moduleChartData = useMemo(
     () =>
       modules
         .map((module) => ({
-          module,
+          module: formatModule(module),
           value: visibleLogs.filter((log) => log.module === module).length,
         }))
         .filter((item) => item.value > 0)
@@ -185,11 +222,16 @@ export default function Audit() {
     [modules, visibleLogs],
   );
 
-  const recentImportantLogs = useMemo(() => {
-    const important = visibleLogs.filter(isImportantEvent);
+  const totalPages = Math.max(1, Math.ceil(visibleLogs.length / pageSize));
+  const safePage = Math.min(page, totalPages);
+  const pagedLogs = visibleLogs.slice(
+    (safePage - 1) * pageSize,
+    safePage * pageSize,
+  );
 
-    return (important.length > 0 ? important : visibleLogs).slice(0, 6);
-  }, [visibleLogs]);
+  useEffect(() => {
+    setPage(1);
+  }, [filters, pageSize]);
 
   const clearFilters = () => {
     setFilters(emptyFilters);
@@ -204,19 +246,19 @@ export default function Audit() {
 
   return (
     <DashboardLayout>
-      <div className="space-y-4">
-        <section className="app-card rounded-[24px] p-5 lg:p-6">
+      <div className="mx-auto w-full max-w-7xl space-y-5">
+        <section className="module-sticky-header app-card rounded-[24px] p-5 lg:p-6">
           <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
             <div>
               <p className="text-sm font-semibold uppercase tracking-[0.16em] text-blue-700">
-                Auditoria
+                Auditoría
               </p>
               <h1 className="mt-2 text-3xl font-bold text-slate-950">
-                Centro de trazabilidad operacional.
+                Trazabilidad de acciones
               </h1>
               <p className="mt-2 max-w-3xl text-sm leading-6 text-slate-600">
-                Eventos reales registrados por FraudShield para seguimiento de
-                accesos, clasificaciones, listas de control y gestion de casos.
+                Permite identificar quién realizó una acción, cuándo ocurrió y
+                qué elemento fue afectado.
               </p>
             </div>
             <button
@@ -251,7 +293,7 @@ export default function Audit() {
           </section>
         ) : (
           <>
-            <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+            <section className="grid auto-rows-fr gap-4 sm:grid-cols-2 xl:grid-cols-4">
               <AuditKpi
                 title="Eventos registrados"
                 value={kpis.events}
@@ -260,25 +302,25 @@ export default function Audit() {
                 tone="blue"
               />
               <AuditKpi
-                title="Casos auditados"
-                value={kpis.auditedCases}
-                description="Casos detectados desde eventos RISK_CASE."
-                icon={FiShield}
-                tone="violet"
+                title="Usuarios con actividad"
+                value={kpis.activeUsers}
+                description="Usuarios humanos presentes en AuditLog."
+                icon={FiUser}
+                tone="emerald"
               />
               <AuditKpi
-                title="Cambios de estado"
+                title="Cambios de estado de casos"
                 value={kpis.statusChanges}
                 description="Transiciones registradas en trazabilidad."
                 icon={FiActivity}
                 tone="amber"
               />
               <AuditKpi
-                title="Usuarios con actividad"
-                value={kpis.activeUsers}
-                description="Actores registrados en AuditLog."
-                icon={FiUser}
-                tone="emerald"
+                title="Cambios en listas de control"
+                value={kpis.controlListChanges}
+                description="Altas, ediciones o cambios registrados."
+                icon={FiShield}
+                tone="violet"
               />
             </section>
 
@@ -293,20 +335,13 @@ export default function Audit() {
               />
             </section>
 
-            <section className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_420px]">
-              <EventsByModuleChart data={moduleChartData} />
-              <RecentActivity
-                logs={recentImportantLogs}
-                riskCaseById={riskCaseById}
-                onSelect={setSelectedLog}
-              />
-            </section>
+            <EventsByModuleChart data={moduleChartData} />
 
             <section className="app-card rounded-[24px] p-5 lg:p-6">
               <div className="flex flex-col gap-2 lg:flex-row lg:items-end lg:justify-between">
                 <div>
                   <h2 className="text-lg font-bold text-slate-950">
-                    Registro de auditoria
+                    Registro de auditoría
                   </h2>
                   <p className="mt-1 text-sm text-slate-500">
                     {formatNumber(visibleLogs.length)} eventos encontrados
@@ -318,11 +353,24 @@ export default function Audit() {
                 <EmptyState text="No existen eventos que coincidan con los filtros." />
               ) : (
                 <AuditTable
-                  logs={visibleLogs}
+                  logs={pagedLogs}
                   riskCaseById={riskCaseById}
                   onSelect={setSelectedLog}
                 />
               )}
+              {visibleLogs.length > 0 ? (
+                <AuditPagination
+                  page={safePage}
+                  pageSize={pageSize}
+                  totalPages={totalPages}
+                  totalRecords={visibleLogs.length}
+                  onPageChange={setPage}
+                  onPageSizeChange={(value) => {
+                    setPageSize(value);
+                    setPage(1);
+                  }}
+                />
+              ) : null}
             </section>
           </>
         )}
@@ -355,85 +403,94 @@ function AuditFilters({
   onClear: () => void;
 }) {
   return (
-    <div className="grid gap-4 lg:grid-cols-[repeat(5,minmax(140px,1fr))_minmax(220px,1.4fr)]">
-      <FilterField label="Desde">
-        <input
-          type="date"
-          value={filters.dateFrom}
-          onChange={(event) => onChange('dateFrom', event.target.value)}
-          className="h-11 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm outline-none focus:border-blue-500 focus:ring-4 focus:ring-blue-100"
-        />
-      </FilterField>
-      <FilterField label="Hasta">
-        <input
-          type="date"
-          value={filters.dateTo}
-          onChange={(event) => onChange('dateTo', event.target.value)}
-          className="h-11 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm outline-none focus:border-blue-500 focus:ring-4 focus:ring-blue-100"
-        />
-      </FilterField>
-      <FilterField label="Modulo">
-        <select
-          value={filters.module}
-          onChange={(event) => onChange('module', event.target.value)}
-          className="h-11 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm outline-none focus:border-blue-500 focus:ring-4 focus:ring-blue-100"
-        >
-          <option value="">Todos</option>
-          {modules.map((module) => (
-            <option key={module} value={module}>
-              {module}
-            </option>
-          ))}
-        </select>
-      </FilterField>
-      <FilterField label="Accion">
-        <select
-          value={filters.action}
-          onChange={(event) => onChange('action', event.target.value)}
-          className="h-11 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm outline-none focus:border-blue-500 focus:ring-4 focus:ring-blue-100"
-        >
-          <option value="">Todas</option>
-          {actions.map((action) => (
-            <option key={action} value={action}>
-              {action}
-            </option>
-          ))}
-        </select>
-      </FilterField>
-      <FilterField label="Usuario">
-        <select
-          value={filters.user}
-          onChange={(event) => onChange('user', event.target.value)}
-          className="h-11 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm outline-none focus:border-blue-500 focus:ring-4 focus:ring-blue-100"
-        >
-          <option value="">Todos</option>
-          {users.map((user) => (
-            <option key={user.value} value={user.value}>
-              {user.label}
-            </option>
-          ))}
-        </select>
-      </FilterField>
-      <FilterField label="Busqueda textual">
-        <div className="flex gap-2">
-          <span className="relative min-w-0 flex-1">
-            <FiSearch className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
-            <input
-              value={filters.query}
-              onChange={(event) => onChange('query', event.target.value)}
-              placeholder="Detalle, entidad o usuario"
-              className="h-11 w-full rounded-xl border border-slate-200 bg-white pl-10 pr-3 text-sm outline-none focus:border-blue-500 focus:ring-4 focus:ring-blue-100"
-            />
-          </span>
-          <button
-            type="button"
-            onClick={onClear}
-            className="h-11 shrink-0 rounded-xl border border-slate-200 bg-white px-3 text-xs font-bold text-slate-700 hover:border-blue-200 hover:bg-blue-50 hover:text-blue-700"
+    <div className="space-y-4">
+      <div className="grid min-w-0 gap-3 md:grid-cols-2 xl:grid-cols-[minmax(140px,0.8fr)_minmax(180px,1fr)_minmax(160px,0.9fr)_minmax(260px,1.5fr)]">
+        <FilterField label="Módulo">
+          <select
+            value={filters.module}
+            onChange={(event) => onChange('module', event.target.value)}
+            className="h-11 w-full min-w-0 rounded-xl border border-slate-200 bg-white px-3 text-sm outline-none focus:border-blue-500 focus:ring-4 focus:ring-blue-100"
           >
-            Limpiar
-          </button>
+            <option value="">Todos los módulos</option>
+            {modules.map((module) => (
+              <option key={module} value={module}>
+                {formatModule(module)}
+              </option>
+            ))}
+          </select>
+        </FilterField>
+        <FilterField label="Acción">
+          <select
+            value={filters.action}
+            onChange={(event) => onChange('action', event.target.value)}
+            className="h-11 w-full min-w-0 rounded-xl border border-slate-200 bg-white px-3 text-sm outline-none focus:border-blue-500 focus:ring-4 focus:ring-blue-100"
+          >
+            <option value="">Todas las acciones</option>
+            {actions.map((action) => (
+              <option key={action} value={action}>
+                {formatAction(action)}
+              </option>
+            ))}
+          </select>
+        </FilterField>
+        <FilterField label="Usuario">
+          <select
+            value={filters.user}
+            onChange={(event) => onChange('user', event.target.value)}
+            className="h-11 w-full min-w-0 rounded-xl border border-slate-200 bg-white px-3 text-sm outline-none focus:border-blue-500 focus:ring-4 focus:ring-blue-100"
+          >
+            <option value="">Todos los actores</option>
+            {users.map((user) => (
+              <option key={user.value} value={user.value}>
+                {user.label}
+              </option>
+            ))}
+          </select>
+        </FilterField>
+        <FilterField label="Búsqueda">
+          <div className="flex min-w-0 gap-2">
+            <span className="relative min-w-0 flex-1">
+              <FiSearch className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+              <input
+                value={filters.query}
+                onChange={(event) => onChange('query', event.target.value)}
+                placeholder="Acción, elemento o usuario"
+                className="h-11 w-full min-w-0 rounded-xl border border-slate-200 bg-white pl-10 pr-3 text-sm outline-none focus:border-blue-500 focus:ring-4 focus:ring-blue-100"
+              />
+            </span>
+            <button
+              type="button"
+              onClick={onClear}
+              className="h-11 shrink-0 rounded-xl border border-slate-200 bg-white px-3 text-xs font-bold text-slate-700 hover:border-blue-200 hover:bg-blue-50 hover:text-blue-700"
+            >
+              Limpiar
+            </button>
+          </div>
+        </FilterField>
+      </div>
+      <details className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+        <summary className="cursor-pointer text-sm font-bold text-slate-800">
+          Más filtros
+        </summary>
+        <div className="mt-4 grid gap-3 sm:grid-cols-2">
+          <FilterField label="Desde">
+            <input
+              type="date"
+              value={filters.dateFrom}
+              onChange={(event) => onChange('dateFrom', event.target.value)}
+              className="h-11 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm outline-none focus:border-blue-500 focus:ring-4 focus:ring-blue-100"
+            />
+          </FilterField>
+          <FilterField label="Hasta">
+            <input
+              type="date"
+              value={filters.dateTo}
+              onChange={(event) => onChange('dateTo', event.target.value)}
+              className="h-11 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm outline-none focus:border-blue-500 focus:ring-4 focus:ring-blue-100"
+            />
+          </FilterField>
         </div>
-      </FilterField>
+      </details>
     </div>
   );
 }
@@ -448,20 +505,16 @@ function AuditTable({
   onSelect: (log: ApiAuditLog) => void;
 }) {
   return (
-    <div className="mt-5 overflow-x-auto rounded-2xl border border-slate-200">
-      <table className="min-w-[1120px] divide-y divide-slate-200 bg-white">
+    <div className="mt-5 overflow-hidden rounded-2xl border border-slate-200">
+      <table className="hidden w-full table-fixed divide-y divide-slate-200 bg-white xl:table">
         <thead className="bg-slate-50">
           <tr>
-            {['Fecha', 'Modulo', 'Accion', 'Detalle', 'Usuario', 'Entidad'].map(
-              (column) => (
-                <th
-                  key={column}
-                  className="whitespace-nowrap px-3 py-2.5 text-left text-xs font-bold uppercase tracking-[0.12em] text-slate-500"
-                >
-                  {column}
-                </th>
-              ),
-            )}
+            <TableHeader className="w-[16%]">Fecha y hora</TableHeader>
+            <TableHeader className="w-[16%]">Usuario</TableHeader>
+            <TableHeader className="w-[14%]">Módulo</TableHeader>
+            <TableHeader className="w-[20%]">Acción</TableHeader>
+            <TableHeader className="w-[22%]">Elemento afectado</TableHeader>
+            <TableHeader className="w-[12%]">Ver detalle</TableHeader>
           </tr>
         </thead>
         <tbody className="divide-y divide-slate-100">
@@ -480,31 +533,75 @@ function AuditTable({
                     onSelect(log);
                   }
                 }}
-                className="cursor-pointer align-top transition hover:bg-blue-50/40 focus:bg-blue-50 focus:outline-none"
+                className={`cursor-pointer align-top transition hover:bg-blue-50/40 focus:bg-blue-50 focus:outline-none ${
+                  log.user ? 'bg-white' : 'bg-slate-50/50'
+                }`}
               >
-                <td className="whitespace-nowrap px-3 py-2.5 text-sm text-slate-700">
+                <td className="px-3 py-2.5 text-sm text-slate-700">
                   {formatDate(log.createdAt)}
                 </td>
-                <td className="whitespace-nowrap px-3 py-2.5">
+                <td className="px-3 py-2.5">
+                  <div className="space-y-1">
+                    <ActorBadge log={log} />
+                    <p className="break-words text-sm font-semibold text-slate-800">
+                      {getUserLabel(log)}
+                    </p>
+                  </div>
+                </td>
+                <td className="px-3 py-2.5">
                   <ModuleBadge module={log.module} />
                 </td>
-                <td className="whitespace-nowrap px-3 py-2.5">
+                <td className="px-3 py-2.5">
                   <ActionBadge action={log.action} />
                 </td>
-                <td className="min-w-96 px-3 py-2.5 text-sm leading-5 text-slate-700">
-                  {log.detail ?? 'No disponible'}
+                <td className="px-3 py-2.5 text-sm font-semibold text-slate-700">
+                  <span className="break-words">{entity.entityLabel}</span>
                 </td>
-                <td className="whitespace-nowrap px-3 py-2.5 text-sm text-slate-700">
-                  {getUserLabel(log)}
-                </td>
-                <td className="whitespace-nowrap px-3 py-2.5 text-sm font-semibold text-slate-700">
-                  {entity.entityLabel}
+                <td className="px-3 py-2.5">
+                  <button
+                    type="button"
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      onSelect(log);
+                    }}
+                    className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-bold text-slate-700 hover:border-blue-200 hover:bg-blue-50 hover:text-blue-700"
+                  >
+                    Ver detalle
+                  </button>
                 </td>
               </tr>
             );
           })}
         </tbody>
       </table>
+      <div className="divide-y divide-slate-100 bg-white xl:hidden">
+        {logs.map((log) => {
+          const entity = getAuditEntity(log, riskCaseById);
+
+          return (
+            <article key={log.id} className="p-4">
+              <div className="flex flex-wrap items-center gap-2">
+                <ActorBadge log={log} />
+                <ModuleBadge module={log.module} />
+                <ActionBadge action={log.action} />
+              </div>
+              <p className="mt-3 text-sm font-semibold text-slate-950">
+                {entity.entityLabel}
+              </p>
+              <p className="mt-1 text-sm text-slate-600">
+                {formatDate(log.createdAt)} · {getUserLabel(log)}
+              </p>
+              <button
+                type="button"
+                onClick={() => onSelect(log)}
+                className="mt-3 rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-bold text-slate-700 hover:border-blue-200 hover:bg-blue-50 hover:text-blue-700"
+              >
+                Ver detalle
+              </button>
+            </article>
+          );
+        })}
+      </div>
     </div>
   );
 }
@@ -516,23 +613,30 @@ function EventsByModuleChart({
 }) {
   return (
     <section className="app-card rounded-[24px] p-5 lg:p-6">
-      <h2 className="text-lg font-bold text-slate-950">Eventos por modulo</h2>
+      <h2 className="text-lg font-bold text-slate-950">Eventos por módulo</h2>
       {data.length === 0 ? (
         <EmptyState text="No hay eventos visibles para graficar." />
       ) : (
-        <div className="mt-5 h-72">
+        <div className="mt-5 h-64 sm:h-72">
           <ResponsiveContainer width="100%" height="100%">
-            <BarChart data={data}>
-              <CartesianGrid strokeDasharray="3 3" vertical={false} />
-              <XAxis dataKey="module" tickLine={false} axisLine={false} />
-              <YAxis allowDecimals={false} tickLine={false} axisLine={false} />
+            <BarChart data={data} layout="vertical" margin={{ left: 8 }}>
+              <CartesianGrid strokeDasharray="3 3" horizontal={false} />
+              <XAxis type="number" allowDecimals={false} tickLine={false} axisLine={false} />
+              <YAxis
+                type="category"
+                dataKey="module"
+                width={118}
+                tickLine={false}
+                axisLine={false}
+                tick={{ fontSize: 12 }}
+              />
               <Tooltip
                 formatter={(value) => [
                   `${formatNumber(Number(value ?? 0))} eventos`,
                   'Eventos',
                 ]}
               />
-              <Bar dataKey="value" radius={[10, 10, 0, 0]}>
+              <Bar dataKey="value" radius={[0, 10, 10, 0]}>
                 {data.map((entry, index) => (
                   <Cell
                     key={entry.module}
@@ -542,51 +646,6 @@ function EventsByModuleChart({
               </Bar>
             </BarChart>
           </ResponsiveContainer>
-        </div>
-      )}
-    </section>
-  );
-}
-
-function RecentActivity({
-  logs,
-  riskCaseById,
-  onSelect,
-}: {
-  logs: ApiAuditLog[];
-  riskCaseById: Map<number, ApiRiskCase>;
-  onSelect: (log: ApiAuditLog) => void;
-}) {
-  return (
-    <section className="app-card rounded-[24px] p-5 lg:p-6">
-      <h2 className="text-lg font-bold text-slate-950">Actividad reciente</h2>
-      {logs.length === 0 ? (
-        <EmptyState text="No hay actividad reciente visible." />
-      ) : (
-        <div className="mt-5 space-y-3">
-          {logs.map((log) => {
-            const entity = getAuditEntity(log, riskCaseById);
-
-            return (
-              <button
-                key={log.id}
-                type="button"
-                onClick={() => onSelect(log)}
-                className="w-full rounded-2xl border border-slate-100 bg-white px-4 py-3 text-left shadow-sm transition hover:-translate-y-0.5 hover:border-blue-100 hover:bg-blue-50/50"
-              >
-                <div className="flex flex-wrap items-center gap-2">
-                  <ModuleBadge module={log.module} />
-                  <ActionBadge action={log.action} />
-                </div>
-                <p className="mt-2 line-clamp-2 text-sm font-semibold text-slate-800">
-                  {log.detail ?? log.action}
-                </p>
-                <p className="mt-1 text-xs text-slate-500">
-                  {formatDate(log.createdAt)} - {entity.entityLabel}
-                </p>
-              </button>
-            );
-          })}
         </div>
       )}
     </section>
@@ -604,84 +663,84 @@ function AuditEventDetail({
 }) {
   const entity = getAuditEntity(log, riskCaseById);
   const values = getTransitionValues(log);
+  const hasChanges = Boolean(values.previous || values.next);
 
   return (
-    <div
-      className="fixed inset-0 z-50 bg-slate-950/35 p-4 backdrop-blur-sm"
-      role="dialog"
-      aria-modal="true"
-      aria-labelledby="audit-event-title"
-    >
-      <div className="ml-auto flex h-full w-full max-w-xl flex-col overflow-hidden rounded-[28px] bg-white shadow-2xl shadow-slate-950/20">
-        <div className="flex items-start justify-between gap-4 border-b border-slate-200 p-5">
-          <div>
-            <p className="text-xs font-bold uppercase tracking-[0.18em] text-blue-700">
-              Detalle de evento
-            </p>
-            <h2
-              id="audit-event-title"
-              className="mt-2 text-2xl font-bold text-slate-950"
-            >
-              Evento #{log.id}
-            </h2>
-          </div>
-          <button
-            type="button"
-            onClick={onClose}
-            className="flex h-10 w-10 items-center justify-center rounded-2xl border border-slate-200 bg-white text-slate-600 hover:border-blue-200 hover:bg-blue-50 hover:text-blue-700"
-            aria-label="Cerrar detalle"
+    <DetailPanel
+      icon={<FiActivity className="h-5 w-5" aria-hidden="true" />}
+      eyebrow="Evento de auditoría"
+      title={`Evento #${log.id}`}
+      badge={
+        <DetailBadge tone={getAuditDetailTone(log.module)}>
+          {formatModule(log.module)}
+        </DetailBadge>
+      }
+      meta={formatDate(log.createdAt)}
+      onClose={onClose}
+      footer={
+        entity.caseId && entity.transactionId ? (
+          <Link
+            to={`/case-management?transactionId=${entity.transactionId}`}
+            className="inline-flex items-center justify-center rounded-xl bg-blue-700 px-4 py-2.5 text-sm font-semibold text-white hover:bg-blue-800"
           >
-            <FiX className="h-5 w-5" aria-hidden="true" />
-          </button>
-        </div>
+            Ver caso #{entity.caseId}
+          </Link>
+        ) : undefined
+      }
+    >
+      <DetailSection title="Resumen" tone={getAuditDetailTone(log.module)}>
+        <DetailGrid>
+          <DetailField
+            label="Usuario o actor"
+            value={`${log.user ? 'Usuario' : 'Sistema'} · ${getUserLabel(log)}`}
+          />
+          <DetailField label="Fecha y hora" value={formatDate(log.createdAt)} />
+          <DetailField label="Módulo" value={formatModule(log.module)} />
+          <DetailField label="Acción" value={formatAction(log.action)} />
+        </DetailGrid>
+      </DetailSection>
 
-        <div className="flex-1 overflow-y-auto p-5">
-          <dl className="divide-y divide-slate-200 border-y border-slate-200">
-            <DetailRow label="Fecha y hora" value={formatDate(log.createdAt)} />
-            <DetailRow label="Usuario" value={getUserLabel(log)} />
-            <DetailRow label="Modulo" value={log.module} />
-            <DetailRow label="Accion" value={log.action} />
-            <DetailRow label="Entidad afectada" value={entity.entity} />
-            <DetailRow
-              label="ID relacionado"
-              value={entity.relatedId ?? 'No disponible'}
-            />
-            <DetailRow
+      <DetailSection title="Identificación">
+        <DetailGrid>
+          <DetailField label="Elemento afectado" value={entity.entity} />
+          <DetailField
+            label="Referencia"
+            value={entity.relatedId ?? 'No disponible'}
+          />
+        </DetailGrid>
+      </DetailSection>
+
+      <DetailSection title="Cambios registrados">
+        {hasChanges ? (
+          <DetailGrid>
+            <DetailField
               label="Valor anterior"
-              value={values.previous ?? 'No registrado en AuditLog actual'}
+              value={values.previous ?? 'No disponible'}
             />
-            <DetailRow
+            <DetailField
               label="Valor nuevo"
-              value={values.next ?? 'No registrado en AuditLog actual'}
+              value={values.next ?? 'No disponible'}
             />
-          </dl>
+          </DetailGrid>
+        ) : (
+          <DetailNote>Este evento no registró cambios de valores.</DetailNote>
+        )}
+      </DetailSection>
 
-          <section className="mt-5 rounded-2xl border border-slate-200 bg-slate-50 p-4">
-            <h3 className="text-sm font-bold text-slate-950">
-              Detalle completo
-            </h3>
-            <p className="mt-2 text-sm leading-6 text-slate-700">
-              {log.detail ?? 'No disponible'}
-            </p>
-          </section>
-
-          {entity.caseId && entity.transactionId ? (
-            <Link
-              to={`/case-management?transactionId=${entity.transactionId}`}
-              className="mt-5 inline-flex items-center justify-center rounded-2xl bg-blue-700 px-4 py-2.5 text-sm font-semibold text-white shadow-lg shadow-blue-700/20 hover:bg-blue-800"
-            >
-              Ver detalle del caso #{entity.caseId}
-            </Link>
-          ) : entity.caseId ? (
-            <p className="mt-5 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
-              Este evento referencia el caso #{entity.caseId}, pero AuditLog no
-              contiene el ID de transaccion necesario para abrir la gestion del
-              caso.
-            </p>
-          ) : null}
-        </div>
-      </div>
-    </div>
+      <DetailSection title="Detalle completo o trazabilidad">
+        <p className="break-words text-sm leading-6 text-slate-700">
+          {log.detail ?? 'No disponible'}
+        </p>
+        {entity.caseId && !entity.transactionId ? (
+          <div className="mt-3">
+            <DetailNote tone="amber">
+              El evento referencia el caso #{entity.caseId}, pero no contiene
+              la transacción necesaria para abrir su gestión.
+            </DetailNote>
+          </div>
+        ) : null}
+      </DetailSection>
+    </DetailPanel>
   );
 }
 
@@ -718,7 +777,7 @@ function AuditKpi({
   };
 
   return (
-    <article className="group relative overflow-hidden rounded-[24px] border border-slate-200 bg-white p-5 text-left shadow-sm shadow-slate-200/70 transition hover:-translate-y-1 hover:shadow-xl hover:shadow-slate-200/80">
+    <article className="group relative h-full overflow-hidden rounded-[24px] border border-slate-200 bg-white p-5 text-left shadow-sm shadow-slate-200/70 transition hover:-translate-y-1 hover:shadow-xl hover:shadow-slate-200/80">
       <span className={`absolute inset-x-0 top-0 h-1 ${tones[tone].indicator}`} />
       <div className="relative flex items-start justify-between gap-4">
         <div>
@@ -745,7 +804,7 @@ function ModuleBadge({ module }: { module: string }) {
     <span
       className={`inline-flex rounded-full border px-2.5 py-1 text-xs font-bold ${moduleColors[module] ?? 'border-slate-200 bg-slate-50 text-slate-700'}`}
     >
-      {module}
+      {formatModule(module)}
     </span>
   );
 }
@@ -755,8 +814,93 @@ function ActionBadge({ action }: { action: string }) {
     <span
       className={`inline-flex rounded-full border px-2.5 py-1 text-xs font-bold ${actionColors[action] ?? 'border-slate-200 bg-white text-slate-700'}`}
     >
-      {action}
+      {formatAction(action)}
     </span>
+  );
+}
+
+function ActorBadge({ log }: { log: ApiAuditLog }) {
+  const isHuman = Boolean(log.user);
+
+  return (
+    <span
+      className={`inline-flex rounded-full border px-2.5 py-1 text-xs font-bold ${
+        isHuman
+          ? 'border-blue-200 bg-blue-50 text-blue-700'
+          : 'border-slate-200 bg-slate-50 text-slate-600'
+      }`}
+    >
+      {isHuman ? 'Usuario' : 'Sistema'}
+    </span>
+  );
+}
+
+function TableHeader({
+  children,
+  className = '',
+}: {
+  children: ReactNode;
+  className?: string;
+}) {
+  return (
+    <th
+      className={`px-3 py-2.5 text-left text-xs font-bold uppercase tracking-[0.12em] text-slate-500 ${className}`}
+    >
+      {children}
+    </th>
+  );
+}
+
+function AuditPagination({
+  page,
+  pageSize,
+  totalPages,
+  totalRecords,
+  onPageChange,
+  onPageSizeChange,
+}: {
+  page: number;
+  pageSize: number;
+  totalPages: number;
+  totalRecords: number;
+  onPageChange: (page: number) => void;
+  onPageSizeChange: (pageSize: number) => void;
+}) {
+  return (
+    <div className="mt-5 flex flex-col gap-3 border-t border-slate-200 pt-4 sm:flex-row sm:items-center sm:justify-between">
+      <p className="text-sm text-slate-500">
+        Página {page} de {totalPages} · {formatNumber(totalRecords)} eventos
+      </p>
+      <div className="flex flex-wrap gap-2">
+        <select
+          value={pageSize}
+          onChange={(event) => onPageSizeChange(Number(event.target.value))}
+          className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-700 outline-none focus:border-blue-500 focus:ring-4 focus:ring-blue-100"
+        >
+          {PAGE_SIZE_OPTIONS.map((option) => (
+            <option key={option} value={option}>
+              {option} por página
+            </option>
+          ))}
+        </select>
+        <button
+          type="button"
+          onClick={() => onPageChange(Math.max(1, page - 1))}
+          disabled={page === 1}
+          className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700 disabled:cursor-not-allowed disabled:opacity-50"
+        >
+          Anterior
+        </button>
+        <button
+          type="button"
+          onClick={() => onPageChange(Math.min(totalPages, page + 1))}
+          disabled={page === totalPages}
+          className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700 disabled:cursor-not-allowed disabled:opacity-50"
+        >
+          Siguiente
+        </button>
+      </div>
+    </div>
   );
 }
 
@@ -772,17 +916,6 @@ function FilterField({
       {label}
       <div className="mt-2">{children}</div>
     </label>
-  );
-}
-
-function DetailRow({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="grid gap-1 py-3 sm:grid-cols-[150px_minmax(0,1fr)]">
-      <dt className="text-sm text-slate-500">{label}</dt>
-      <dd className="break-words text-sm font-semibold text-slate-950">
-        {value}
-      </dd>
-    </div>
   );
 }
 
@@ -874,8 +1007,8 @@ function getAuditEntity(
     const transactionId = Number(transactionMatch[1]);
 
     return {
-      entity: 'Transaccion',
-      entityLabel: `Transaccion #${transactionId}`,
+      entity: 'Transacción',
+      entityLabel: `Transacción #${transactionId}`,
       relatedId: `#${transactionId}`,
       transactionId,
     };
@@ -896,8 +1029,8 @@ function getAuditEntity(
     const emailMatch = detail.match(/[^\s:]+@[^\s.]+\.[^\s.]+/);
 
     return {
-      entity: 'Sesion',
-      entityLabel: emailMatch?.[0] ?? 'Sesion',
+      entity: 'Sesión',
+      entityLabel: emailMatch?.[0] ?? 'Sesión',
       relatedId: emailMatch?.[0],
     };
   }
@@ -937,18 +1070,15 @@ function isStatusChange(log: ApiAuditLog) {
   );
 }
 
-function isImportantEvent(log: ApiAuditLog) {
+function isLegacyTestEvent(log: ApiAuditLog) {
+  const detail = log.detail?.toLowerCase() ?? '';
+
   return (
-    log.module === 'RISK_CASE' ||
-    [
-      'LOGIN_FAILED',
-      'CLASSIFY_TRANSACTION',
-      'UPSERT_CONTROL_LIST_ENTRY',
-      'UPDATE_CONTROL_LIST_ENTRY',
-      'CASE_RESOLVED',
-      'STATUS_CHANGED',
-      'PRIORITY_CHANGED',
-    ].includes(log.action)
+    detail.includes('cierre-watch') ||
+    detail.includes('cierre-allow') ||
+    detail.includes('cierre sprint iii') ||
+    detail.includes('validación duplicado sprint iii') ||
+    detail.includes('validacion duplicado sprint iii')
   );
 }
 
@@ -996,4 +1126,19 @@ function getUserLabel(log: ApiAuditLog) {
 
 function formatAuditValue(value: string) {
   return value.replaceAll('_', ' ');
+}
+
+function formatModule(module: string) {
+  return moduleLabels[module] ?? module.replaceAll('_', ' ');
+}
+
+function formatAction(action: string) {
+  return actionLabels[action] ?? action.replaceAll('_', ' ');
+}
+
+function getAuditDetailTone(module: string) {
+  if (module === 'RISK_CASE') return 'violet' as const;
+  if (module === 'CONTROL_LIST') return 'cyan' as const;
+  if (module === 'TRANSACTION') return 'blue' as const;
+  return 'slate' as const;
 }

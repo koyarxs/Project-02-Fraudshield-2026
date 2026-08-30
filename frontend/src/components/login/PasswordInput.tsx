@@ -21,7 +21,7 @@ export default function PasswordInput({
     <div>
       <label
         htmlFor="password"
-        className="mb-2.5 block text-sm font-semibold text-slate-800"
+        className="mb-2.5 block text-sm font-semibold text-blue-50 lg:text-slate-800"
       >
         Contrasena
       </label>
@@ -63,7 +63,7 @@ export default function PasswordInput({
       </div>
 
       {error && (
-        <p id="password-error" className="mt-2 text-sm text-red-600">
+        <p id="password-error" className="mt-2 text-sm text-red-200 lg:text-red-600">
           {error}
         </p>
       )}

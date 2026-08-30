@@ -11,12 +11,14 @@ export interface ReportDataset {
 }
 
 class ReportService {
-  async getDataset(): Promise<ReportDataset> {
+  async getDataset(includeAudit: boolean): Promise<ReportDataset> {
     const [batches, transactions, cases, auditLogs] = await Promise.all([
       api.get<ApiHistoryBatch[]>('/processing-batch'),
       api.get<ApiTransaction[]>('/transaction'),
       api.get<ApiRiskCase[]>('/risk-case'),
-      api.get<ApiAuditLog[]>('/audit-log'),
+      includeAudit
+        ? api.get<ApiAuditLog[]>('/audit-log')
+        : Promise.resolve({ data: [] as ApiAuditLog[] }),
     ]);
 
     return {

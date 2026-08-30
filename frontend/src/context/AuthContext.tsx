@@ -88,7 +88,10 @@ export function AuthProvider({ children }: AuthProviderProps) {
 
   const logout = () => {
     authService.logout();
-    emitAuthChange();
+
+    if (typeof window !== 'undefined') {
+      window.location.replace('/login');
+    }
   };
 
   const value: AuthContextType = {
